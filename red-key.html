@@ -111,6 +111,29 @@
   }
   @keyframes livePulse{0%,100%{opacity:1}50%{opacity:0.4}}
 
+  /* Match roster: shows both players' usernames, team colors, and tags. */
+  .match-roster{
+    display:none; flex-direction:column; gap: 4px;
+    margin-top: 6px; text-align:right;
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10.5px; letter-spacing: 0.14em;
+  }
+  .match-roster.on{display:flex}
+  .roster-row{display:inline-flex; align-items:center; gap:6px; justify-content:flex-end}
+  .roster-team{
+    font-weight: 700; text-transform: uppercase;
+    padding: 1px 6px; border: 1px solid currentColor;
+    font-size: 9px; letter-spacing: 0.22em;
+  }
+  .roster-team.red{color: var(--us-2)}
+  .roster-team.blue{color: var(--them-2)}
+  .roster-name{color: var(--ink); text-transform: none; letter-spacing: 0.04em}
+  .roster-tag{
+    background: var(--red); color: #14110a; font-weight: 800;
+    padding: 1px 6px; font-size: 9px; letter-spacing: 0.22em;
+  }
+  .roster-tag.muted{ background: var(--surface-2); color: var(--ink-dim) }
+
   .section-label{
     display:inline-flex;align-items:center;gap:8px;
     font-family:"Saira Condensed", sans-serif;
@@ -1265,6 +1288,18 @@
     <button id="menu-btn" class="menu-link" type="button">← Menu</button>
     <div class="matchbadge">
       <div class="live">LIVE</div>
+      <div class="match-roster" id="match-roster">
+        <div class="roster-row">
+          <span class="roster-team red">RED</span>
+          <span class="roster-name" id="roster-red-name">—</span>
+          <span class="roster-tag" id="roster-red-tag" style="display:none"></span>
+        </div>
+        <div class="roster-row">
+          <span class="roster-team blue">BLUE</span>
+          <span class="roster-name" id="roster-blue-name">—</span>
+          <span class="roster-tag" id="roster-blue-tag" style="display:none"></span>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -1791,6 +1826,34 @@
     </div>
 
     <div class="admin-section">
+      <h3>Player Tag</h3>
+      <div class="row2">
+        <input type="text" id="tag-user" placeholder="Target username" />
+        <input type="text" id="tag-text" placeholder="Tag text (blank = clear)" maxlength="24" />
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button class="primary-btn" id="tag-set" type="button">Set Tag</button>
+        <button class="ghost-btn" id="tag-set-default" type="button">Use Default (ADMIN)</button>
+      </div>
+      <div class="auth-error" id="tag-msg" style="margin-top:6px"></div>
+    </div>
+
+    <div class="admin-section">
+      <h3>My Tag</h3>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="my-tag-show" />
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Show my tag in matches</span>
+        </label>
+      </div>
+      <div class="row2">
+        <input type="text" id="my-tag-input" placeholder="Your tag (blank = none)" maxlength="24" />
+        <button class="primary-btn" id="my-tag-save" type="button">Save</button>
+      </div>
+      <div class="auth-error" id="my-tag-msg" style="margin-top:6px"></div>
+    </div>
+
+    <div class="admin-section">
       <h3>Game Server URL</h3>
       <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--ink-dimmer);margin-bottom:8px">
         Auto-detected from this page: <span id="admin-server-default"></span><br>
@@ -1887,7 +1950,9 @@
           keys: acct.keys | 0,
           players: acct.players || [],
           equipped: acct.equipped || { forward: null, leftWing: null, rightWing: null },
-          is_admin: !!acct.isAdmin
+          is_admin: !!acct.isAdmin,
+          tag: acct.tag || null,
+          tag_visible: acct.tagVisible !== false
         }).eq('id', acct.__authUserId);
         if (error) console.warn('profile save failed:', error.message);
       } catch (e){ console.warn('profile save crashed:', e); }
@@ -1904,7 +1969,9 @@
         keys: acct.keys | 0,
         players: acct.players || [],
         equipped: acct.equipped || {},
-        is_admin: !!acct.isAdmin
+        is_admin: !!acct.isAdmin,
+        tag: acct.tag || null,
+        tag_visible: acct.tagVisible !== false
       });
       const url = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + acct.__authUserId;
       navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
@@ -1919,8 +1986,18 @@
       keys: profile.keys | 0,
       players: profile.players || [],
       equipped: profile.equipped || { forward: null, leftWing: null, rightWing: null },
+      tag: profile.tag || null,
+      tagVisible: profile.tag_visible !== false,
       createdAt: profile.created_at ? new Date(profile.created_at).getTime() : Date.now()
     };
+  }
+  function effectiveTag(acct){
+    // Resolve what tag string (if any) to display next to this account in a
+    // match. The account row stores both the tag text and a visibility flag.
+    if (!acct) return '';
+    if (acct.tagVisible === false) return '';
+    if (acct.tag && acct.tag.trim()) return acct.tag.trim();
+    return '';
   }
 
   // ── Random player name generator ─────────────────────
@@ -3733,7 +3810,7 @@
     (async () => {
       await ensureMpChannel();
       if (wsReady && currentUser){
-        wsSend({ type: 'hello', username: currentUser, equipped: getMyEquippedPlayers() });
+        wsSend(buildHelloPayload());
       }
     })();
   });
@@ -3997,7 +4074,7 @@
       socket.onopen = () => {
         wsReady = true;
         if (currentUser){
-          wsSend({ type: 'hello', username: currentUser, equipped: getMyEquippedPlayers() });
+          wsSend(buildHelloPayload());
         }
         if (!settled){ settled = true; clearTimeout(t); wsPendingConnect = null; resolve(true); }
       };
@@ -4267,6 +4344,47 @@
       return id ? a.players.find(p => p.id === id) : null;
     });
   }
+  // ── In-match player roster (RED/BLUE + name + optional tag) ─────────
+  const matchRosterEl = document.getElementById('match-roster');
+  const rosterRedName = document.getElementById('roster-red-name');
+  const rosterRedTag  = document.getElementById('roster-red-tag');
+  const rosterBlueName = document.getElementById('roster-blue-name');
+  const rosterBlueTag  = document.getElementById('roster-blue-tag');
+  function setRosterFromMatchStart(msg){
+    if (!matchRosterEl) return;
+    const redName  = msg.redUsername  || '—';
+    const blueName = msg.blueUsername || '—';
+    const redTag   = (msg.redTag  || '').trim();
+    const blueTag  = (msg.blueTag || '').trim();
+    rosterRedName.textContent  = redName;
+    rosterBlueName.textContent = blueName;
+    if (redTag){
+      rosterRedTag.textContent = redTag;
+      rosterRedTag.style.display = '';
+    } else {
+      rosterRedTag.style.display = 'none';
+    }
+    if (blueTag){
+      rosterBlueTag.textContent = blueTag;
+      rosterBlueTag.style.display = '';
+    } else {
+      rosterBlueTag.style.display = 'none';
+    }
+    matchRosterEl.classList.add('on');
+  }
+  function clearMatchRoster(){
+    if (matchRosterEl) matchRosterEl.classList.remove('on');
+  }
+  function buildHelloPayload(){
+    const a = currentAccount();
+    return {
+      type: 'hello',
+      username: currentUser,
+      equipped: getMyEquippedPlayers(),
+      isAdmin: !!(a && a.isAdmin),
+      tag: a ? effectiveTag(a) : ''
+    };
+  }
 
   // All multiplayer traffic goes through the server now. The server is the
   // source of truth — we send inputs, the server runs the simulation and
@@ -4439,6 +4557,7 @@
         stopTurnTimer();
         if (resetBtn) resetBtn.style.display = '';
         if (quitBtn) quitBtn.style.display = 'none';
+        clearMatchRoster();
         hint.textContent = msg.won
           ? `Match won · +${msg.keys | 0} 🔑  (Total ${a ? a.keys : '?'})`
           : `Match lost · +${msg.keys | 0} 🔑  (Total ${a ? a.keys : '?'})`;
@@ -4599,6 +4718,7 @@
     stopTurnTimer();
     if (resetBtn) resetBtn.style.display = '';
     if (quitBtn) quitBtn.style.display = 'none';
+    clearMatchRoster();
     hint.textContent = reason === 'match-end'
       ? 'Match ended — opponent left.'
       : 'Opponent disconnected.';
@@ -4690,6 +4810,7 @@
     refreshPossessionUI();
     refreshArrows();
     refreshModeUI();
+    setRosterFromMatchStart(msg);
     mpOverlay.classList.remove('on');
     hideMainMenu();
     startMatchHeartbeat();
@@ -4840,14 +4961,91 @@
     document.getElementById('ab-magnitude').value = '';
     rebuildAbilityList();
   });
-  document.getElementById('gift-send').addEventListener('click', () => {
+  document.getElementById('gift-send').addEventListener('click', async () => {
+    const u = document.getElementById('gift-user').value.trim();
+    const amt = parseInt(document.getElementById('gift-amount').value || '0', 10);
     const msg = document.getElementById('gift-msg');
-    msg.textContent = 'Gifting other users requires a server-side admin function (not yet wired up in Supabase mode).';
+    if (!u){ msg.textContent = 'Enter a target username.'; return; }
+    if (!Number.isFinite(amt) || amt <= 0){ msg.textContent = 'Enter a positive amount.'; return; }
+    msg.textContent = 'Sending…';
+    try {
+      const { error } = await sb.rpc('admin_gift_keys', { p_target_username: u, p_amount: amt });
+      if (error){ msg.textContent = error.message || 'Gift failed.'; return; }
+      msg.textContent = `Sent ${amt} keys to ${u}.`;
+    } catch (e){ msg.textContent = (e && e.message) || 'Gift crashed.'; }
   });
-  document.getElementById('promote-btn').addEventListener('click', () => {
+  document.getElementById('promote-btn').addEventListener('click', async () => {
+    const u = document.getElementById('promote-user').value.trim();
     const msg = document.getElementById('promote-msg');
-    msg.textContent = 'Promoting other users requires a server-side admin function (not yet wired up in Supabase mode).';
+    if (!u){ msg.textContent = 'Enter a username.'; return; }
+    msg.textContent = 'Promoting…';
+    try {
+      const { error } = await sb.rpc('admin_set_tag', { p_target_username: u, p_tag: 'ADMIN', p_make_admin: true });
+      if (error){ msg.textContent = error.message || 'Promote failed.'; return; }
+      msg.textContent = `${u} is now an admin (tag: ADMIN).`;
+    } catch (e){ msg.textContent = (e && e.message) || 'Promote crashed.'; }
   });
+  const tagSetBtn = document.getElementById('tag-set');
+  if (tagSetBtn){
+    tagSetBtn.addEventListener('click', async () => {
+      const u = document.getElementById('tag-user').value.trim();
+      const t = document.getElementById('tag-text').value;
+      const msg = document.getElementById('tag-msg');
+      if (!u){ msg.textContent = 'Enter a username.'; return; }
+      msg.textContent = 'Saving…';
+      try {
+        const { error } = await sb.rpc('admin_set_tag', { p_target_username: u, p_tag: t, p_make_admin: false });
+        if (error){ msg.textContent = error.message || 'Tag update failed.'; return; }
+        msg.textContent = t ? `${u}'s tag is now "${t}".` : `${u}'s tag cleared.`;
+      } catch (e){ msg.textContent = (e && e.message) || 'Tag update crashed.'; }
+    });
+  }
+  const tagDefaultBtn = document.getElementById('tag-set-default');
+  if (tagDefaultBtn){
+    tagDefaultBtn.addEventListener('click', async () => {
+      const u = document.getElementById('tag-user').value.trim();
+      const msg = document.getElementById('tag-msg');
+      if (!u){ msg.textContent = 'Enter a username.'; return; }
+      msg.textContent = 'Saving…';
+      try {
+        const { error } = await sb.rpc('admin_set_tag', { p_target_username: u, p_tag: 'ADMIN', p_make_admin: false });
+        if (error){ msg.textContent = error.message || 'Tag update failed.'; return; }
+        msg.textContent = `${u} tagged as ADMIN.`;
+      } catch (e){ msg.textContent = (e && e.message) || 'Tag update crashed.'; }
+    });
+  }
+  // My-tag toggle (shown only to admins): updates the local account and
+  // upserts to Supabase via saveDB.
+  const myTagShow  = document.getElementById('my-tag-show');
+  const myTagInput = document.getElementById('my-tag-input');
+  const myTagSave  = document.getElementById('my-tag-save');
+  function refreshMyTagControls(){
+    const a = currentAccount();
+    if (!a || !a.isAdmin) return;
+    if (myTagInput) myTagInput.value = a.tag || '';
+    if (myTagShow)  myTagShow.checked = a.tagVisible !== false;
+  }
+  if (myTagShow){
+    myTagShow.addEventListener('change', () => {
+      const a = currentAccount();
+      if (!a) return;
+      a.tagVisible = !!myTagShow.checked;
+      saveDB();
+      wsSend({ type: 'roster', isAdmin: !!a.isAdmin, tag: effectiveTag(a) });
+    });
+  }
+  if (myTagSave){
+    myTagSave.addEventListener('click', () => {
+      const a = currentAccount();
+      const msg = document.getElementById('my-tag-msg');
+      if (!a){ if (msg) msg.textContent = 'Not signed in.'; return; }
+      const t = (myTagInput.value || '').trim().slice(0, 24);
+      a.tag = t || null;
+      saveDB();
+      wsSend({ type: 'roster', isAdmin: !!a.isAdmin, tag: effectiveTag(a) });
+      if (msg) msg.textContent = t ? `Your tag is now "${t}".` : 'Tag cleared.';
+    });
+  }
   document.getElementById('admin-back').addEventListener('click', () => {
     adminOverlay.classList.remove('on');
     showMainMenu();
@@ -4857,6 +5055,7 @@
     if (!a || !a.isAdmin) return;
     rebuildAbilityList();
     refreshAdminServerUI();
+    refreshMyTagControls();
     hideMainMenu();
     adminOverlay.classList.add('on');
   }
@@ -5089,7 +5288,7 @@
       // Tell the game server who we are once the WS is up.
       await ensureMpChannel();
       if (wsReady && currentUser){
-        wsSend({ type: 'hello', username: currentUser, equipped: getMyEquippedPlayers() });
+        wsSend(buildHelloPayload());
       }
     } catch (e){
       console.warn('auto-login failed:', e);

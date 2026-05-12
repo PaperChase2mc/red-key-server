@@ -4,6 +4,13 @@ All notable changes to Red Key. Most recent first.
 
 ## 2026-05-12
 
+### Added
+- In a multiplayer match, both players' usernames now show in the top-right with their team color (RED or BLUE) and any tag.
+- Admins can gift keys to any player by username.
+- Admins can give any player a custom tag, or use the default "ADMIN" tag. Tags appear next to that player's name in matches.
+- Admins have a personal "Show my tag in matches" toggle and can rename their own tag to whatever they want.
+- Granting Admin now also sets the new admin's tag to "ADMIN" by default.
+
 ### Fixed
 - Quit Match actually ends the match now. Previously, quitting could put you back into the same match a few seconds later.
 - The "Tap to continue" prompt after a clash now works reliably. If your first tap didn't register, a second tap will.

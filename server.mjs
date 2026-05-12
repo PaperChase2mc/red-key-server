@@ -128,8 +128,8 @@ function createMatch(wsA, wsB){
   const id = String(nextMatchId++);
   const match = {
     id,
-    playerA: { ws: usClient.ws,   username: usClient.username,   team: 'us',   equipped: usClient.equipped   || [null,null,null] },
-    playerB: { ws: themClient.ws, username: themClient.username, team: 'them', equipped: themClient.equipped || [null,null,null] },
+    playerA: { ws: usClient.ws,   username: usClient.username,   team: 'us',   equipped: usClient.equipped   || [null,null,null], isAdmin: !!usClient.isAdmin,   tag: usClient.tag   || '' },
+    playerB: { ws: themClient.ws, username: themClient.username, team: 'them', equipped: themClient.equipped || [null,null,null], isAdmin: !!themClient.isAdmin, tag: themClient.tag || '' },
     players: {},
     ball: { x: START_BALL.x, y: START_BALL.y, rot: 0 },
     ballHolder: null,
@@ -162,19 +162,25 @@ function createMatch(wsA, wsB){
 }
 
 function buildMatchStart(match, role){
+  const me  = role === 'us' ? match.playerA : match.playerB;
+  const opp = role === 'us' ? match.playerB : match.playerA;
   return {
     type: 'match-start',
     matchId: match.id,
-    opponent: role === 'us' ? match.playerB.username : match.playerA.username,
+    opponent: opp.username,
     role,
     players: serializeAllPlayers(match),
     state: snapshotState(match),
     turn: match.turn,
     target: SCORE_TARGET,
-    // Resume aids: true if this side has already submitted aims for this turn,
-    // and whether the server is currently animating. The client uses these to
-    // restore the local "locked-in" UI on a reconnect instead of letting the
-    // user think they're between turns when they aren't.
+    // Identity for the in-match HUD on both sides.
+    redUsername:  match.playerA.username,
+    blueUsername: match.playerB.username,
+    redTag:       match.playerA.tag || '',
+    blueTag:      match.playerB.tag || '',
+    redIsAdmin:   !!match.playerA.isAdmin,
+    blueIsAdmin:  !!match.playerB.isAdmin,
+    // Resume aids.
     animating: !!match.animating,
     iLocked: role === 'us' ? !!match.aimsA : !!match.aimsB,
     oppLocked: role === 'us' ? !!match.aimsB : !!match.aimsA
@@ -707,10 +713,23 @@ function handleMessage(ws, msg){
         ws,
         username: u,
         equipped: msg.equipped || [null,null,null],
+        isAdmin: !!msg.isAdmin,
+        tag: (typeof msg.tag === 'string' ? msg.tag.slice(0, 24) : '') || '',
         matchId: resumeMatch ? resumeMatch.id : null
       };
       clientsByWs.set(ws, info);
       clientsByUser.set(u, ws);
+      // If this user is in a match, sync their identity into the match record
+      // so subsequent buildMatchStart / opponent lookups use the latest values.
+      if (resumeMatch){
+        if (resumeMatch.playerA.username === u){
+          resumeMatch.playerA.isAdmin = info.isAdmin;
+          resumeMatch.playerA.tag = info.tag;
+        } else if (resumeMatch.playerB.username === u){
+          resumeMatch.playerB.isAdmin = info.isAdmin;
+          resumeMatch.playerB.tag = info.tag;
+        }
+      }
       send(ws, { type: 'welcome', username: u, onlineCount: clientsByUser.size });
       broadcastOnlineCount();
 
@@ -726,7 +745,11 @@ function handleMessage(ws, msg){
       break;
     }
     case 'roster': {
-      if (c) c.equipped = msg.equipped || [null,null,null];
+      if (c){
+        c.equipped = msg.equipped || c.equipped;
+        if (typeof msg.isAdmin === 'boolean') c.isAdmin = msg.isAdmin;
+        if (typeof msg.tag === 'string') c.tag = msg.tag.slice(0, 24);
+      }
       break;
     }
     case 'queue': {
