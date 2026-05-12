@@ -1200,17 +1200,24 @@
   .notif-actions{display:flex; gap:8px}
   .notif-actions button{flex:1}
 
-  /* ── Turn timer (next to Lock In) ───────────────────── */
+  /* ── Turn timer (inside scoreboard "Turn" cell) ───────────────────── */
+  .sb-timer-label{
+    font-family:"JetBrains Mono", monospace;
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.22em;
+    color: var(--ink-dimmer);
+    margin-top: 8px;
+  }
   .sb-timer{
-    font-family: "JetBrains Mono", monospace;
-    font-size: 11px; font-weight: 700;
+    font-family:"Saira Condensed", sans-serif;
+    font-weight: 800; font-size: 24px; font-style: italic;
+    line-height: 1; letter-spacing: 0.01em;
     color: var(--yellow);
-    letter-spacing: 0.18em;
-    margin-top: 4px;
-    min-height: 14px;
+    text-shadow: 0 0 10px rgba(251,191,36,0.35);
+    min-height: 26px;
   }
   .sb-timer.urgent{
     color: var(--red);
+    text-shadow: 0 0 14px rgba(239,43,58,0.55);
     animation: timerPulse 0.9s ease-in-out infinite;
   }
   @keyframes timerPulse{
@@ -1281,7 +1288,8 @@
     <div class="sb-cell">
       <div class="sb-label">Turn</div>
       <div class="sb-value red" id="sb-turn">01</div>
-      <div class="sb-timer" id="sb-timer"></div>
+      <div class="sb-timer-label">Time Left</div>
+      <div class="sb-timer" id="sb-timer">—</div>
     </div>
     <div class="sb-cell">
       <div class="sb-label">Power Output</div>
