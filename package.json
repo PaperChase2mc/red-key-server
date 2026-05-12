@@ -1,0 +1,16 @@
+{
+  "name": "red-key-server",
+  "version": "1.0.0",
+  "description": "Authoritative multiplayer game server for Red Key",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
