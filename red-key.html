@@ -369,6 +369,15 @@
     clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%);
     padding-right: 28px;
   }
+  .btn-quit{
+    border-color: var(--red-deep);
+    color: var(--red);
+  }
+  .btn-quit:hover{
+    background: var(--red-deep);
+    border-color: var(--red);
+    color: var(--ink);
+  }
 
   .hint{
     margin-top: 4px;
@@ -1467,6 +1476,7 @@
     </div>
     <div class="btn-row">
       <button class="btn" id="btn-reset" type="button">Reset</button>
+      <button class="btn btn-quit" id="btn-quit-match" type="button" style="display:none">Quit Match</button>
       <button class="btn btn-primary" id="btn-lock" type="button" disabled>Lock In</button>
     </div>
   </section>
@@ -1975,6 +1985,7 @@
   const svg = document.querySelector('.pitch');
   const lockBtn = document.getElementById('btn-lock');
   const resetBtn = document.getElementById('btn-reset');
+  const quitBtn = document.getElementById('btn-quit-match');
   const turnEl = document.getElementById('sb-turn');
   const hint = document.getElementById('hint');
   const powerFill = document.getElementById('sb-power');
@@ -4170,6 +4181,7 @@
     stopMatchHeartbeat();
     stopTurnTimer();
     if (resetBtn) resetBtn.style.display = '';
+    if (quitBtn) quitBtn.style.display = 'none';
     hint.textContent = 'Match abandoned · 0 🔑';
     setTimeout(() => showMainMenu(), 1400);
   }
@@ -4348,6 +4360,7 @@
         stopMatchHeartbeat();
         stopTurnTimer();
         if (resetBtn) resetBtn.style.display = '';
+        if (quitBtn) quitBtn.style.display = 'none';
         hint.textContent = msg.won
           ? `Match won · +${msg.keys | 0} 🔑  (Total ${a ? a.keys : '?'})`
           : `Match lost · +${msg.keys | 0} 🔑  (Total ${a ? a.keys : '?'})`;
@@ -4507,6 +4520,7 @@
     stopMatchHeartbeat();
     stopTurnTimer();
     if (resetBtn) resetBtn.style.display = '';
+    if (quitBtn) quitBtn.style.display = 'none';
     hint.textContent = reason === 'match-end'
       ? 'Match ended — opponent left.'
       : 'Opponent disconnected.';
@@ -4588,6 +4602,7 @@
     // Hide the reset button in MP — resetting mid-match would only break the
     // local view, the server keeps running the simulation anyway.
     if (resetBtn) resetBtn.style.display = 'none';
+    if (quitBtn) quitBtn.style.display = '';
     hint.textContent = `Match vs ${mpPartner ? mpPartner.username : 'opponent'} · Bo${msg.target || 3} · You drag only ${mpIAmHost ? 'RED' : 'BLUE'} players · 200 🔑 / 25 🔑`;
   }
 
@@ -4845,6 +4860,11 @@
   // (Server URL is admin-only — handled in the Admin Panel below.)
 
   lockBtn.addEventListener('click', lockIn);
+  quitBtn.addEventListener('click', () => {
+    if (!mpMatchStarted) return;
+    const ok = confirm('Forfeit this match? You will lose and earn 0 keys.');
+    if (ok) forceLoseMatch();
+  });
   resetBtn.addEventListener('click', reset);
 
   // ── Apply roster data to in-field players ────────────
