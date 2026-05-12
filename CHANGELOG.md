@@ -5,6 +5,7 @@ All notable changes to Red Key. Most recent first.
 ## 2026-05-12
 
 ### Added
+- Maintenance mode now kicks non-admins live. The instant an admin flips the switch, every connected non-admin player is signed out and shown the offline screen, no refresh required.
 - Admins can toggle maintenance mode from the admin panel. When it's on, non-admins who try to log in see an offline screen with the Discord invite link, a Copy Link button, and a Go Back to Login button. Admins are unaffected.
 
 ### Changed

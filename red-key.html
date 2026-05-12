@@ -2347,7 +2347,8 @@
     if (acct && acct.isAdmin) return false; // admins bypass
     const on = await fetchMaintenanceMode();
     if (!on) return false;
-    // Block: sign out and show the maintenance screen.
+    // Block: tear down the live subscription, sign out, show offline screen.
+    unsubscribeMaintenanceChanges();
     try { sb.auth.signOut(); } catch(_){}
     if (currentUser){ delete db.accounts[currentUser]; }
     currentUser = null;
@@ -2355,6 +2356,40 @@
     showMaintenanceScreen();
     return true;
   }
+  // Realtime subscription: live-kicks non-admins the instant an admin flips
+  // the maintenance switch. The login-time gate is still the fallback in case
+  // the Realtime channel drops.
+  let maintenanceChannel = null;
+  function subscribeMaintenanceChanges(){
+    if (maintenanceChannel) return; // already subscribed
+    maintenanceChannel = sb.channel('game_settings_changes')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'game_settings',
+        filter: 'id=eq.1'
+      }, async (payload) => {
+        const newMode = !!(payload.new && payload.new.maintenance_mode);
+        maintenanceModeCache = newMode;
+        const acct = currentAccount();
+        if (acct && acct.isAdmin){
+          // Admin: just keep the panel display in sync if it's open.
+          refreshMaintenanceStatus();
+          return;
+        }
+        if (newMode){
+          // Non-admin: kick to the offline screen.
+          await enforceMaintenanceGate();
+        }
+      })
+      .subscribe();
+  }
+  function unsubscribeMaintenanceChanges(){
+    if (!maintenanceChannel) return;
+    try { sb.removeChannel(maintenanceChannel); } catch(_){}
+    maintenanceChannel = null;
+  }
+
   const maintCopyBtn = document.getElementById('maintenance-copy');
   if (maintCopyBtn){
     maintCopyBtn.addEventListener('click', async () => {
@@ -4247,6 +4282,7 @@
     authPass.value = '';
     // Maintenance gate: bounces non-admins to the offline screen.
     if (await enforceMaintenanceGate()){ return; }
+    subscribeMaintenanceChanges();
     hideAuth();
     refreshAccountBars();
     showMainMenu();
@@ -4273,6 +4309,7 @@
   function logout(){
     // Flush any pending profile save, sign out of Supabase, then drop the cache.
     if (saveDBTimer){ clearTimeout(saveDBTimer); saveDBTimer = null; }
+    unsubscribeMaintenanceChanges();
     try { sb.auth.signOut(); } catch(_){}
     if (currentUser){ delete db.accounts[currentUser]; }
     clearSession();
@@ -6438,6 +6475,7 @@
       currentUser = acct.username;
       // Maintenance gate: same as manual login.
       if (await enforceMaintenanceGate()){ return; }
+      subscribeMaintenanceChanges();
       hideAuth();
       refreshAccountBars();
       applyEquippedToPlayers();
