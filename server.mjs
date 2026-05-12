@@ -673,14 +673,49 @@ function handleMessage(ws, msg){
     case 'hello': {
       const u = (msg.username || '').trim();
       if (!u){ send(ws, { type: 'error', message: 'username required' }); return; }
-      // Boot any existing connection for this username
+
+      // Resume any in-progress match this user has. Look up via prior session
+      // first, then fall back to scanning matches (handles fresh-tab reconnect
+      // after the prior session was already cleaned up).
       const prior = clientsByUser.get(u);
-      if (prior && prior !== ws){ try { prior.close(1000, 'replaced'); } catch(_){} }
-      const info = { ws, username: u, equipped: msg.equipped || [null,null,null], matchId: null };
+      const priorInfo = (prior && prior !== ws) ? clientsByWs.get(prior) : null;
+      let resumeMatch = (priorInfo && priorInfo.matchId) ? matches.get(priorInfo.matchId) : null;
+      if (!resumeMatch){
+        for (const m of matches.values()){
+          if (m.playerA.username === u || m.playerB.username === u){ resumeMatch = m; break; }
+        }
+      }
+      // Transfer the WS reference inside the match BEFORE we clean up the old
+      // socket so handleDisconnect for the old WS sees stale bookkeeping and bails.
+      if (resumeMatch){
+        if (resumeMatch.playerA.username === u) resumeMatch.playerA.ws = ws;
+        if (resumeMatch.playerB.username === u) resumeMatch.playerB.ws = ws;
+      }
+      if (prior && prior !== ws){
+        clientsByWs.delete(prior);
+        try { prior.close(4001, 'session-replaced'); } catch(_){}
+      }
+
+      const info = {
+        ws,
+        username: u,
+        equipped: msg.equipped || [null,null,null],
+        matchId: resumeMatch ? resumeMatch.id : null
+      };
       clientsByWs.set(ws, info);
       clientsByUser.set(u, ws);
       send(ws, { type: 'welcome', username: u, onlineCount: clientsByUser.size });
       broadcastOnlineCount();
+
+      // Push current match state to the resumed tab so it can pick up exactly
+      // where the player left off.
+      if (resumeMatch){
+        const role = resumeMatch.playerA.username === u ? 'us' : 'them';
+        send(ws, buildMatchStart(resumeMatch, role));
+        // Let the opponent know their partner is back (if they're connected).
+        const oppWs = role === 'us' ? resumeMatch.playerB.ws : resumeMatch.playerA.ws;
+        if (oppWs && oppWs !== ws) send(oppWs, { type: 'opponent-reconnected', username: u });
+      }
       break;
     }
     case 'roster': {
@@ -758,12 +793,17 @@ function handleMessage(ws, msg){
 function handleDisconnect(ws){
   const c = clientsByWs.get(ws);
   if (!c) return;
+  // Match persists across disconnects — it only ends on quit or win. We just
+  // null out the WS reference so subsequent broadcasts to the missing side
+  // become no-ops. The player can resume by opening another tab and the
+  // server will transfer the match into their new WS via the `hello` handler.
   if (c.matchId){
     const match = matches.get(c.matchId);
     if (match){
+      if (match.playerA.username === c.username) match.playerA.ws = null;
+      if (match.playerB.username === c.username) match.playerB.ws = null;
       const oppWs = c.username === match.playerA.username ? match.playerB.ws : match.playerA.ws;
-      send(oppWs, { type: 'opponent-left' });
-      cleanupMatch(match);
+      if (oppWs) send(oppWs, { type: 'opponent-disconnected', username: c.username });
     }
   }
   const qi = queueList.indexOf(ws);

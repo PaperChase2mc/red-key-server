@@ -3872,6 +3872,7 @@
   let wsConn = null;
   let wsReady = false;
   let wsPendingConnect = null;
+  let sessionReplaced = false;       // set when server boots this tab in favor of another
   function getServerUrl(){
     try {
       const override = localStorage.getItem('redkey:server-url');
@@ -3914,9 +3915,20 @@
       };
       socket.onmessage = (e) => { try { onMpMessage(JSON.parse(e.data)); } catch(_){} };
       socket.onerror = () => {};
-      socket.onclose = () => {
+      socket.onclose = (ev) => {
         wsReady = false;
-        if (settled && currentUser) setTimeout(() => ensureMpChannel(), 5000);
+        // Server uses close code 4001 when another tab takes over the session.
+        // Don't reconnect or we'll ping-pong with the new tab.
+        if (ev && ev.code === 4001){
+          sessionReplaced = true;
+          mpMatchStarted = false;
+          mpModeActive = false;
+          if (typeof hint !== 'undefined' && hint){
+            hint.textContent = 'Session moved to another tab.';
+          }
+          return;
+        }
+        if (settled && currentUser && !sessionReplaced) setTimeout(() => ensureMpChannel(), 5000);
       };
     });
     return wsPendingConnect;
@@ -4115,23 +4127,9 @@
     } catch(_){ return null; }
   }
   function showBlockOverlay(data){
-    hideMainMenu();
-    if (typeof hideAuth === 'function') hideAuth();
-    if (rosterOverlay) rosterOverlay.classList.remove('on');
-    if (storeOverlay) storeOverlay.classList.remove('on');
-    if (mpOverlay) mpOverlay.classList.remove('on');
-    if (adminOverlay) adminOverlay.classList.remove('on');
-    const statusEl = document.getElementById('block-status');
-    if (statusEl){
-      statusEl.innerHTML = `<span class="mm-spinner"></span>Match${data.partner ? ' vs ' + data.partner : ''} in another tab.<span class="mm-sub">Finish that match to unlock this tab, or abandon it below.</span>`;
-    }
-    blockOverlay.classList.add('on');
-    if (blockPollTimer) clearInterval(blockPollTimer);
-    blockPollTimer = setInterval(() => {
-      if (!detectActiveMatchInOtherTab()){
-        hideBlockOverlay();
-      }
-    }, 1500);
+    // No-op: the server now auto-resumes matches when a user opens another
+    // tab — the new tab receives match-start with current state and slots
+    // straight back into the game. No need to block.
   }
   function hideBlockOverlay(){
     blockOverlay.classList.remove('on');
@@ -4581,9 +4579,12 @@
         if (txt) txt.textContent = sp.num;
       }
     }
-    scoreUs = 0; scoreThem = 0;
-    scoreUsEl.textContent = '0';
-    scoreThemEl.textContent = '0';
+    // Use scores from the resume snapshot if present, otherwise start at 0.
+    const stateScores = msg.state && msg.state.s ? msg.state.s : null;
+    scoreUs   = stateScores ? (stateScores[0] | 0) : 0;
+    scoreThem = stateScores ? (stateScores[1] | 0) : 0;
+    scoreUsEl.textContent   = String(scoreUs);
+    scoreThemEl.textContent = String(scoreThem);
     turn = msg.turn || 1;
     turnEl.textContent = String(turn).padStart(2, '0');
     playerAims = freshAims();
@@ -4816,6 +4817,9 @@
     menuSettings.classList.toggle('on', name === 'settings');
   }
   function showMainMenu(){
+    // During a live multiplayer match the only way out is the Quit Match
+    // button. Block menu access so players can't reach Practice, Logout, etc.
+    if (mpMatchStarted) return;
     showMenuScreen('home');
     mainMenu.classList.add('on');
   }
