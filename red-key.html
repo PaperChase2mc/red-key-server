@@ -2347,8 +2347,8 @@
     if (acct && acct.isAdmin) return false; // admins bypass
     const on = await fetchMaintenanceMode();
     if (!on) return false;
-    // Block: tear down the live subscription, sign out, show offline screen.
-    unsubscribeMaintenanceChanges();
+    // Block: tear down live subscriptions, sign out, show offline screen.
+    unsubscribeAllRealtime();
     try { sb.auth.signOut(); } catch(_){}
     if (currentUser){ delete db.accounts[currentUser]; }
     currentUser = null;
@@ -2388,6 +2388,107 @@
     if (!maintenanceChannel) return;
     try { sb.removeChannel(maintenanceChannel); } catch(_){}
     maintenanceChannel = null;
+  }
+
+  // ── Live profile + abilities subscriptions ─────────────
+  // profilesChannel: own row only, so admin gifts / tag changes show up instantly.
+  // abilitiesChannel: all rows, so the Skill Builder list stays in sync across admins.
+  let profilesChannel = null;
+  let abilitiesChannel = null;
+  function subscribeProfileChanges(){
+    if (profilesChannel) return;
+    const acct = currentAccount();
+    if (!acct || !acct.__authUserId) return;
+    profilesChannel = sb.channel('profiles_own_' + acct.__authUserId)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'profiles',
+        filter: 'id=eq.' + acct.__authUserId
+      }, (payload) => {
+        const row = payload && payload.new;
+        if (!row || !currentUser) return;
+        const me = db.accounts[currentUser];
+        if (!me) return;
+        // Replace cached fields with whatever's in the new row.
+        me.username   = row.username || me.username;
+        me.isAdmin    = !!row.is_admin;
+        me.keys       = row.keys | 0;
+        me.players    = row.players || [];
+        me.equipped   = row.equipped || me.equipped;
+        me.tag        = row.tag || null;
+        me.tagVisible = row.tag_visible !== false;
+        // If the username key changed, re-key db.accounts.
+        if (me.username !== currentUser){
+          delete db.accounts[currentUser];
+          db.accounts[me.username] = me;
+          currentUser = me.username;
+        }
+        refreshAccountBars();
+        if (typeof refreshRosterUI === 'function') refreshRosterUI();
+        if (typeof rebuildPlayerGrid === 'function') rebuildPlayerGrid();
+        if (typeof refreshEquipRow === 'function') refreshEquipRow();
+        // Push the new identity (tag / admin flag) to the game server so
+        // future matches use it. The current match keeps its captured tag.
+        if (wsReady && typeof buildHelloPayload === 'function'){
+          wsSend({ type: 'roster', equipped: getMyEquippedPlayers(), isAdmin: !!me.isAdmin, tag: effectiveTag(me) });
+        }
+      })
+      .subscribe();
+  }
+  function unsubscribeProfileChanges(){
+    if (!profilesChannel) return;
+    try { sb.removeChannel(profilesChannel); } catch(_){}
+    profilesChannel = null;
+  }
+  function subscribeAbilityChanges(){
+    if (abilitiesChannel) return;
+    abilitiesChannel = sb.channel('abilities_changes')
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'abilities'
+      }, async (payload) => {
+        const evt = payload.eventType || payload.type;
+        if (evt === 'DELETE'){
+          const id = payload.old && payload.old.id;
+          if (id) delete db.abilities[id];
+        } else if (payload.new){
+          const row = payload.new;
+          db.abilities[row.id] = {
+            id: row.id,
+            name: row.name,
+            description: row.description || '',
+            trigger: row.trigger,
+            effect: row.effect,
+            magnitude: row.magnitude | 0,
+            config: row.config || null
+          };
+        }
+        // If the Skill Builder is currently open, refresh its list so admins
+        // see each other's edits in real time.
+        if (skillBuilderOverlay && skillBuilderOverlay.classList.contains('on')){
+          renderSkillList();
+        }
+        // Refresh roster screen so weapon names update on player tiles.
+        if (typeof rebuildPlayerGrid === 'function' && rosterOverlay && rosterOverlay.classList.contains('on')){
+          rebuildPlayerGrid();
+        }
+      })
+      .subscribe();
+  }
+  function unsubscribeAbilityChanges(){
+    if (!abilitiesChannel) return;
+    try { sb.removeChannel(abilitiesChannel); } catch(_){}
+    abilitiesChannel = null;
+  }
+  function subscribeAllRealtime(){
+    subscribeMaintenanceChanges();
+    subscribeProfileChanges();
+    subscribeAbilityChanges();
+  }
+  function unsubscribeAllRealtime(){
+    unsubscribeMaintenanceChanges();
+    unsubscribeProfileChanges();
+    unsubscribeAbilityChanges();
   }
 
   const maintCopyBtn = document.getElementById('maintenance-copy');
@@ -4282,7 +4383,7 @@
     authPass.value = '';
     // Maintenance gate: bounces non-admins to the offline screen.
     if (await enforceMaintenanceGate()){ return; }
-    subscribeMaintenanceChanges();
+    subscribeAllRealtime();
     hideAuth();
     refreshAccountBars();
     showMainMenu();
@@ -4309,7 +4410,7 @@
   function logout(){
     // Flush any pending profile save, sign out of Supabase, then drop the cache.
     if (saveDBTimer){ clearTimeout(saveDBTimer); saveDBTimer = null; }
-    unsubscribeMaintenanceChanges();
+    unsubscribeAllRealtime();
     try { sb.auth.signOut(); } catch(_){}
     if (currentUser){ delete db.accounts[currentUser]; }
     clearSession();

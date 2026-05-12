@@ -5,6 +5,8 @@ All notable changes to Red Key. Most recent first.
 ## 2026-05-12
 
 ### Added
+- Account changes are now live. If an admin gifts you keys, sets your tag, or promotes you, your key count, name, tag, and admin button update on your screen immediately — no refresh.
+- Skill Builder is now live too. When one admin saves, edits, or deletes an ability, every other admin watching the Skill Builder sees the list update right away. Weapon names on the roster screen also refresh in place.
 - Maintenance mode now kicks non-admins live. The instant an admin flips the switch, every connected non-admin player is signed out and shown the offline screen, no refresh required.
 - Admins can toggle maintenance mode from the admin panel. When it's on, non-admins who try to log in see an offline screen with the Discord invite link, a Copy Link button, and a Go Back to Login button. Admins are unaffected.
 
