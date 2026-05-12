@@ -1934,30 +1934,10 @@
 
     <div class="admin-section">
       <h3>Skill Builder</h3>
-      <div class="row2">
-        <input type="text" id="ab-name" placeholder="Ability name" maxlength="32" />
-        <select id="ab-trigger">
-          <option value="on-kick">On Kick</option>
-          <option value="on-clash-win">On Clash Win</option>
-          <option value="on-clash-lose">On Clash Lose</option>
-          <option value="on-turn-start">On Turn Start</option>
-          <option value="passive">Passive</option>
-        </select>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--ink-dimmer);margin-bottom:8px">
+        Design weapon abilities that can drop on Epic and Legendary players.
       </div>
-      <textarea id="ab-desc" placeholder="Description (optional)" maxlength="160"></textarea>
-      <div class="row2">
-        <select id="ab-effect">
-          <option value="speed-boost">Speed Boost</option>
-          <option value="kick-power">Kick Power</option>
-          <option value="stamina-boost">Stamina Boost</option>
-          <option value="freeze-immune">Freeze Immunity</option>
-          <option value="key-gift">Key Reward</option>
-          <option value="bonus-clash">Bonus QTE Score</option>
-        </select>
-        <input type="number" id="ab-magnitude" placeholder="Magnitude (e.g. 25)" min="0" max="999" />
-      </div>
-      <button class="primary-btn" id="ab-create" type="button">Create Ability</button>
-      <div class="ability-list" id="ability-list" style="margin-top:10px"></div>
+      <button class="primary-btn" id="open-skill-builder" type="button">Open Skill Builder →</button>
     </div>
 
     <div class="admin-section">
@@ -2022,6 +2002,53 @@
     </div>
 
     <button class="ghost-btn" id="admin-back" type="button">← Menu</button>
+  </div>
+</div>
+
+<!-- Skill Builder: sub-screen launched from the admin panel -->
+<div class="full-overlay" id="skill-builder-overlay" role="dialog" aria-modal="true" aria-label="Skill Builder">
+  <div class="overlay-card">
+    <h2 class="overlay-title"><em>Skill</em> Builder</h2>
+    <div class="overlay-sub">Design weapons that drop on Epic and Legendary pulls.</div>
+
+    <div class="admin-section">
+      <h3 id="sb-form-title">New Ability</h3>
+      <input type="hidden" id="sb-id" />
+      <div class="row2" style="margin-bottom:8px">
+        <input type="text" id="sb-name" placeholder="Name (required)" maxlength="32" />
+        <select id="sb-trigger">
+          <option value="on-kick">On Kick</option>
+          <option value="on-clash-win">On Clash Win</option>
+          <option value="on-clash-lose">On Clash Lose</option>
+          <option value="on-turn-start">On Turn Start</option>
+          <option value="passive">Passive</option>
+        </select>
+      </div>
+      <textarea id="sb-desc" placeholder="Description (optional)" maxlength="160" style="width:100%;margin-bottom:8px"></textarea>
+      <div class="row2" style="margin-bottom:10px">
+        <select id="sb-effect">
+          <option value="speed-boost">Speed Boost</option>
+          <option value="kick-power">Kick Power</option>
+          <option value="stamina-boost">Stamina Boost</option>
+          <option value="freeze-immune">Freeze Immunity</option>
+          <option value="key-gift">Key Reward</option>
+          <option value="bonus-clash">Bonus QTE Score</option>
+        </select>
+        <input type="number" id="sb-magnitude" placeholder="Magnitude (e.g. 25)" min="0" max="999" />
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="primary-btn" id="sb-save" type="button">Save Ability</button>
+        <button class="ghost-btn"   id="sb-clear" type="button">Clear Form</button>
+        <span class="auth-error" id="sb-msg" style="flex:1"></span>
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <h3>Existing Abilities</h3>
+      <div id="sb-list" class="ability-list"></div>
+    </div>
+
+    <button class="ghost-btn" id="sb-back" type="button">← Admin Panel</button>
   </div>
 </div>
 
@@ -2139,6 +2166,27 @@
       navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
     } catch(_){}
   });
+
+  async function loadAbilities(){
+    // Pull every ability from Supabase into the in-memory `db.abilities` map
+    // so the rest of the codebase (player tiles, weapon roll, admin browser)
+    // can stay synchronous against db.abilities[id].
+    try {
+      const { data, error } = await sb.from('abilities').select('*').order('created_at');
+      if (error){ console.warn('loadAbilities failed:', error.message); return; }
+      db.abilities = {};
+      for (const row of (data || [])){
+        db.abilities[row.id] = {
+          id: row.id,
+          name: row.name,
+          description: row.description || '',
+          trigger: row.trigger,
+          effect: row.effect,
+          magnitude: row.magnitude | 0
+        };
+      }
+    } catch (e){ console.warn('loadAbilities crashed:', e); }
+  }
 
   function profileToAcct(profile, authUserId){
     return {
@@ -2369,7 +2417,10 @@
   const mpInviteSend = document.getElementById('mp-invite-send');
   const mpInviteMsg = document.getElementById('mp-invite-msg');
   const adminOverlay = document.getElementById('admin-overlay');
-  const abilityList = document.getElementById('ability-list');
+  // Skill Builder overlay refs (the inline ability-list in the admin panel
+  // was replaced by a dedicated sub-screen).
+  const skillBuilderOverlay = document.getElementById('skill-builder-overlay');
+  const sbList = document.getElementById('sb-list');
   const menuAccountName = document.getElementById('menu-account-name');
   const menuAccountKeys = document.getElementById('menu-account-keys');
   const menuAdminBtn = document.getElementById('menu-admin-btn');
@@ -3976,7 +4027,8 @@
     hideAuth();
     refreshAccountBars();
     showMainMenu();
-    // Connect to the game server and announce who we are.
+    // Pull abilities + connect to game server in parallel.
+    loadAbilities();
     (async () => {
       await ensureMpChannel();
       if (wsReady && currentUser){
@@ -5327,50 +5379,135 @@
     resolveClash();
   }
 
-  // ── Admin panel ──────────────────────────────────────
-  function rebuildAbilityList(){
-    abilityList.innerHTML = '';
+  // ── Skill Builder (admin-only sub-screen) ──────────────
+  const sbIdEl    = document.getElementById('sb-id');
+  const sbNameEl  = document.getElementById('sb-name');
+  const sbDescEl  = document.getElementById('sb-desc');
+  const sbTrigEl  = document.getElementById('sb-trigger');
+  const sbEffEl   = document.getElementById('sb-effect');
+  const sbMagEl   = document.getElementById('sb-magnitude');
+  const sbMsgEl   = document.getElementById('sb-msg');
+  const sbTitleEl = document.getElementById('sb-form-title');
+
+  function clearSkillForm(){
+    sbIdEl.value = '';
+    sbNameEl.value = '';
+    sbDescEl.value = '';
+    sbTrigEl.value = 'on-kick';
+    sbEffEl.value  = 'speed-boost';
+    sbMagEl.value  = '';
+    sbMsgEl.textContent = '';
+    sbTitleEl.textContent = 'New Ability';
+  }
+  function fillSkillFormFromAbility(a){
+    sbIdEl.value = a.id;
+    sbNameEl.value = a.name || '';
+    sbDescEl.value = a.description || '';
+    sbTrigEl.value = a.trigger || 'on-kick';
+    sbEffEl.value  = a.effect  || 'speed-boost';
+    sbMagEl.value  = String(a.magnitude | 0);
+    sbMsgEl.textContent = '';
+    sbTitleEl.textContent = 'Edit Ability';
+  }
+  function renderSkillList(){
+    if (!sbList) return;
+    sbList.innerHTML = '';
     const ids = Object.keys(db.abilities);
     if (ids.length === 0){
-      abilityList.innerHTML = '<div style="color:var(--ink-dimmer);font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:0.16em;padding:6px 0">No abilities yet — build one above.</div>';
+      sbList.innerHTML = '<div style="color:var(--ink-dimmer);font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:0.16em;padding:6px 0">No abilities yet — build one above.</div>';
       return;
     }
-    ids.forEach(id => {
+    for (const id of ids){
       const a = db.abilities[id];
       const row = document.createElement('div');
       row.className = 'ability-row';
       row.innerHTML = `
         <div class="ainfo">
           <span class="aname">${a.name}</span>
-          <span class="adesc">${a.desc || ''}</span>
+          <span class="adesc">${a.description || ''}</span>
           <span><span class="effect-pill">${a.trigger}</span><span class="effect-pill">${a.effect} · ${a.magnitude}</span></span>
         </div>
-        <button class="ghost-btn" data-ab-del="${id}" type="button">Delete</button>
+        <div style="display:flex;gap:6px">
+          <button class="ghost-btn" data-sb-edit="${id}" type="button">Edit</button>
+          <button class="ghost-btn" data-sb-del="${id}"  type="button">Delete</button>
+        </div>
       `;
-      abilityList.appendChild(row);
-    });
-    abilityList.querySelectorAll('[data-ab-del]').forEach(b => {
+      sbList.appendChild(row);
+    }
+    sbList.querySelectorAll('[data-sb-edit]').forEach(b => {
       b.addEventListener('click', () => {
-        delete db.abilities[b.dataset.abDel];
-        saveDB();
-        rebuildAbilityList();
+        const a = db.abilities[b.dataset.sbEdit];
+        if (a) fillSkillFormFromAbility(a);
+      });
+    });
+    sbList.querySelectorAll('[data-sb-del]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.dataset.sbDel;
+        const a = db.abilities[id];
+        if (!a) return;
+        if (!confirm(`Delete ability "${a.name}"? Players who hold it will keep the reference but the name will read "?".`)) return;
+        try {
+          const { error } = await sb.from('abilities').delete().eq('id', id);
+          if (error){ sbMsgEl.textContent = error.message || 'Delete failed.'; return; }
+          delete db.abilities[id];
+          // If we were editing this one, reset the form.
+          if (sbIdEl.value === id) clearSkillForm();
+          renderSkillList();
+        } catch (e){ sbMsgEl.textContent = (e && e.message) || 'Delete crashed.'; }
       });
     });
   }
-  document.getElementById('ab-create').addEventListener('click', () => {
-    const name = document.getElementById('ab-name').value.trim();
-    if (!name) return;
-    const trigger = document.getElementById('ab-trigger').value;
-    const effect = document.getElementById('ab-effect').value;
-    const desc = document.getElementById('ab-desc').value.trim();
-    const magnitude = parseInt(document.getElementById('ab-magnitude').value || '0', 10);
-    const id = uid('ab');
-    db.abilities[id] = { id, name, trigger, effect, magnitude, desc };
-    saveDB();
-    document.getElementById('ab-name').value = '';
-    document.getElementById('ab-desc').value = '';
-    document.getElementById('ab-magnitude').value = '';
-    rebuildAbilityList();
+  async function saveSkillFromForm(){
+    const name = sbNameEl.value.trim();
+    if (!name){ sbMsgEl.textContent = 'Name is required.'; return; }
+    const payload = {
+      name,
+      description: sbDescEl.value.trim() || null,
+      trigger: sbTrigEl.value,
+      effect:  sbEffEl.value,
+      magnitude: Math.max(0, parseInt(sbMagEl.value || '0', 10) | 0)
+    };
+    const editingId = sbIdEl.value || '';
+    sbMsgEl.textContent = editingId ? 'Saving…' : 'Creating…';
+    try {
+      let row, error;
+      if (editingId){
+        ({ data: row, error } = await sb.from('abilities')
+          .update(payload).eq('id', editingId).select().single());
+      } else {
+        ({ data: row, error } = await sb.from('abilities')
+          .insert(payload).select().single());
+      }
+      if (error){ sbMsgEl.textContent = error.message || 'Save failed.'; return; }
+      db.abilities[row.id] = {
+        id: row.id,
+        name: row.name,
+        description: row.description || '',
+        trigger: row.trigger,
+        effect: row.effect,
+        magnitude: row.magnitude | 0
+      };
+      sbMsgEl.textContent = editingId ? `Updated "${row.name}".` : `Created "${row.name}".`;
+      clearSkillForm();
+      renderSkillList();
+    } catch (e){ sbMsgEl.textContent = (e && e.message) || 'Save crashed.'; }
+  }
+
+  document.getElementById('sb-save').addEventListener('click', saveSkillFromForm);
+  document.getElementById('sb-clear').addEventListener('click', clearSkillForm);
+  document.getElementById('sb-back').addEventListener('click', () => {
+    skillBuilderOverlay.classList.remove('on');
+    adminOverlay.classList.add('on');
+  });
+  document.getElementById('open-skill-builder').addEventListener('click', async () => {
+    const a = currentAccount();
+    if (!a || !a.isAdmin) return;
+    adminOverlay.classList.remove('on');
+    skillBuilderOverlay.classList.add('on');
+    clearSkillForm();
+    // Refresh from Supabase so other admins' edits show up.
+    await loadAbilities();
+    renderSkillList();
   });
   document.getElementById('gift-send').addEventListener('click', async () => {
     const u = document.getElementById('gift-user').value.trim();
@@ -5464,7 +5601,6 @@
   function showAdmin(){
     const a = currentAccount();
     if (!a || !a.isAdmin) return;
-    rebuildAbilityList();
     refreshAdminServerUI();
     refreshMyTagControls();
     hideMainMenu();
@@ -5696,6 +5832,7 @@
       refreshRosterUI();
       refreshPossessionUI();
       showMainMenu();
+      loadAbilities();
       // Tell the game server who we are once the WS is up.
       await ensureMpChannel();
       if (wsReady && currentUser){
