@@ -2358,11 +2358,11 @@
   };
   function pickRarity(){
     const r = Math.random() * 100;
-    if (r < 2)  return 'legendary';   // 2%
-    if (r < 7)  return 'epic';        // 5%
-    if (r < 20) return 'rare';        // 13%
-    if (r < 50) return 'uncommon';    // 30%
-    return 'common';                  // 50%
+    if (r < 0.5)  return 'legendary';   // 0.5%
+    if (r < 5.5)  return 'epic';        // 5%
+    if (r < 25.5) return 'rare';        // 20%
+    if (r < 50.5) return 'uncommon';    // 25%
+    return 'common';                    // 49.5%
   }
   function rollStatIn(min, max){
     return min + Math.floor(Math.random() * (max - min + 1));
