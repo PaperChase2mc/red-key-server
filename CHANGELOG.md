@@ -7,6 +7,8 @@ All notable changes to Red Key. Most recent first.
 ### Added
 - Roster has sort buttons: "Best → Worst" and "Worst → Best" by rarity. Click again to clear and return to the default order.
 - You can sell players from your roster for 50 keys each. Tap a player to select them, then tap the red Sell button. Confirms before selling. Equipped players are automatically unequipped first.
+- Multi-select on the roster: tap as many players as you want and sell them all at once. The Sell button updates with the count and total payout.
+- Rarity bulk-select: chips for Common / Uncommon / Rare / Epic / Legendary. Tap one to select every player of that rarity in your roster. Tap again to deselect them. Combine with single-tap to mix and match. A Clear button shows whenever you have anything selected.
 - When your opponent quits a match, a popup appears explaining what happened and how many keys you won. The match automatically ends for you as well, then drops you back at the menu.
 - Invite-by-name has autocomplete. Start typing a player name and a list of up to 10 matching players appears under the input. Click one to send the invite.
 - Invite-created matches don't pay keys to either side — they're for friendly play. Queue matches still pay 200/25.

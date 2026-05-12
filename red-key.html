@@ -1031,6 +1031,34 @@
     color: #14110a;
     border-color: var(--ink);
   }
+  .roster-controls .rarity-btn{
+    padding: 6px 10px;
+    border: 1px solid currentColor;
+    background: var(--surface);
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    opacity: 0.85;
+  }
+  .roster-controls .rarity-btn:hover{ opacity: 1; background: var(--surface-2) }
+  .roster-controls .rarity-btn[data-rarity="common"]{    color: var(--ink-dim) }
+  .roster-controls .rarity-btn[data-rarity="uncommon"]{  color: #4ade80 }
+  .roster-controls .rarity-btn[data-rarity="rare"]{      color: #60a5fa }
+  .roster-controls .rarity-btn[data-rarity="epic"]{      color: #c084fc }
+  .roster-controls .rarity-btn[data-rarity="legendary"]{ color: var(--yellow) }
+  .roster-controls .clear-btn{
+    padding: 6px 10px;
+    border: 1px solid var(--line-2);
+    background: transparent;
+    color: var(--ink-dim);
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .roster-controls .clear-btn:hover{ background: var(--surface-2); color: var(--ink) }
+  .roster-controls .clear-btn[hidden]{display:none}
   .roster-controls .sell-btn{
     margin-left: auto;
     padding: 8px 14px;
@@ -1047,6 +1075,7 @@
     background: var(--red-deep); color: var(--ink); border-color: var(--red);
   }
   .roster-controls .sell-btn[hidden]{display:none}
+  .ctrl-break{ flex-basis: 100%; height: 0 }
 
   /* Player cards (collection) */
   .player-grid{
@@ -1746,10 +1775,18 @@
     </div>
     <div class="overlay-sub">Tap a player, then a slot to equip</div>
     <div class="roster-controls" id="roster-controls">
-      <span class="label">Sort by Rarity</span>
+      <span class="label">Sort</span>
       <button class="sort-btn" id="roster-sort-desc" type="button">Best → Worst</button>
       <button class="sort-btn" id="roster-sort-asc" type="button">Worst → Best</button>
-      <button class="sell-btn" id="roster-sell" type="button" hidden>Sell · 50 🔑</button>
+      <div class="ctrl-break"></div>
+      <span class="label">Select Rarity</span>
+      <button class="rarity-btn" data-rarity="common"    type="button">Common</button>
+      <button class="rarity-btn" data-rarity="uncommon"  type="button">Uncommon</button>
+      <button class="rarity-btn" data-rarity="rare"      type="button">Rare</button>
+      <button class="rarity-btn" data-rarity="epic"      type="button">Epic</button>
+      <button class="rarity-btn" data-rarity="legendary" type="button">Legendary</button>
+      <button class="clear-btn" id="roster-clear" type="button" hidden>Clear</button>
+      <button class="sell-btn"  id="roster-sell"  type="button" hidden>Sell · 50 🔑</button>
     </div>
     <div class="player-grid" id="player-grid"></div>
     <button class="ghost-btn" style="margin-top:14px" id="roster-back" type="button">← Menu</button>
@@ -3972,7 +4009,7 @@
   }
 
   // ── Roster screen ───────────────────────────────────
-  let selectedRosterId = null;
+  const selectedRosterIds = new Set();
   let rosterSort = 'none'; // 'none' | 'desc' (best-first) | 'asc' (worst-first)
   const SELL_PRICE = 50;
   function rarityRank(r){
@@ -3986,7 +4023,7 @@
       const r1 = rarityRank(p1.rarity);
       const r2 = rarityRank(p2.rarity);
       if (r1 !== r2) return rosterSort === 'desc' ? r2 - r1 : r1 - r2;
-      // Tiebreaker: total stars, descending for both modes (better player surfaces first within a rarity)
+      // Tiebreaker: total stars, descending within a rarity for both modes
       const s1 = (p1.stats.speed|0) + (p1.stats.shooting|0) + (p1.stats.stamina|0);
       const s2 = (p2.stats.speed|0) + (p2.stats.shooting|0) + (p2.stats.stamina|0);
       return rosterSort === 'desc' ? s2 - s1 : s1 - s2;
@@ -3999,17 +4036,29 @@
     if (descBtn) descBtn.classList.toggle('active', rosterSort === 'desc');
     if (ascBtn)  ascBtn.classList.toggle('active',  rosterSort === 'asc');
   }
-  function refreshSellButton(){
-    const sellBtn = document.getElementById('roster-sell');
-    if (!sellBtn) return;
-    sellBtn.hidden = !selectedRosterId;
+  function refreshSelectionControls(){
+    const sellBtn  = document.getElementById('roster-sell');
+    const clearBtn = document.getElementById('roster-clear');
+    const n = selectedRosterIds.size;
+    if (sellBtn){
+      sellBtn.hidden = n === 0;
+      if (n > 0) sellBtn.textContent = `Sell ${n} · ${n * SELL_PRICE} 🔑`;
+    }
+    if (clearBtn) clearBtn.hidden = n === 0;
   }
   function rebuildPlayerGrid(){
     playerGrid.innerHTML = '';
     const a = currentAccount();
     if (!a) return;
+    // Drop any selected IDs that no longer exist (defensive — covers sells).
+    if (selectedRosterIds.size){
+      const valid = new Set(a.players.map(p => p.id));
+      for (const id of Array.from(selectedRosterIds)){
+        if (!valid.has(id)) selectedRosterIds.delete(id);
+      }
+    }
     refreshSortButtons();
-    refreshSellButton();
+    refreshSelectionControls();
     if (a.players.length === 0){
       playerGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--ink-dimmer);padding:20px;font-family:JetBrains Mono,monospace;font-size:11px;letter-spacing:0.18em">No players yet — open a pack in the Store.</div>';
       return;
@@ -4020,17 +4069,18 @@
       if (a.equipped.forward === p.id) equippedSlot = 'F';
       else if (a.equipped.leftWing === p.id) equippedSlot = 'LW';
       else if (a.equipped.rightWing === p.id) equippedSlot = 'RW';
-      tile.className = 'player-tile' + (selectedRosterId === p.id ? ' selected' : '') + (equippedSlot ? ' equipped' : '');
+      tile.className = 'player-tile' + (selectedRosterIds.has(p.id) ? ' selected' : '') + (equippedSlot ? ' equipped' : '');
       if (equippedSlot) tile.dataset.equippedSlot = equippedSlot;
       tile.innerHTML = renderPlayerTileHTML(p);
       tile.addEventListener('click', () => {
-        selectedRosterId = (selectedRosterId === p.id) ? null : p.id;
+        if (selectedRosterIds.has(p.id)) selectedRosterIds.delete(p.id);
+        else                              selectedRosterIds.add(p.id);
         rebuildPlayerGrid();
       });
       playerGrid.appendChild(tile);
     }
   }
-  // Sort + sell wiring.
+  // Sort wiring.
   document.getElementById('roster-sort-desc').addEventListener('click', () => {
     rosterSort = (rosterSort === 'desc') ? 'none' : 'desc';
     rebuildPlayerGrid();
@@ -4039,21 +4089,47 @@
     rosterSort = (rosterSort === 'asc') ? 'none' : 'asc';
     rebuildPlayerGrid();
   });
+  // Rarity bulk-select: clicking a rarity chip toggles every player of that
+  // rarity in the selection. If every player of that rarity is already
+  // selected, the click deselects them; otherwise it adds the missing ones.
+  document.querySelectorAll('.rarity-btn[data-rarity]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const a = currentAccount();
+      if (!a) return;
+      const rarity = btn.dataset.rarity;
+      const matches = a.players.filter(p => p.rarity === rarity);
+      if (matches.length === 0) return;
+      const allSelected = matches.every(p => selectedRosterIds.has(p.id));
+      if (allSelected){
+        for (const p of matches) selectedRosterIds.delete(p.id);
+      } else {
+        for (const p of matches) selectedRosterIds.add(p.id);
+      }
+      rebuildPlayerGrid();
+    });
+  });
+  document.getElementById('roster-clear').addEventListener('click', () => {
+    selectedRosterIds.clear();
+    rebuildPlayerGrid();
+  });
   document.getElementById('roster-sell').addEventListener('click', () => {
     const a = currentAccount();
-    if (!a || !selectedRosterId) return;
-    const idx = a.players.findIndex(p => p.id === selectedRosterId);
-    if (idx < 0) return;
-    const player = a.players[idx];
-    const ok = confirm(`Sell ${player.name} (#${player.num}, ${player.rarity}) for ${SELL_PRICE} keys?`);
+    if (!a || selectedRosterIds.size === 0) return;
+    const ids = Array.from(selectedRosterIds);
+    const count = ids.length;
+    const total = count * SELL_PRICE;
+    const ok = confirm(`Sell ${count} player${count === 1 ? '' : 's'} for ${total} keys?`);
     if (!ok) return;
-    // Unequip if currently equipped, then remove and pay out.
+    // Unequip any of these that are equipped.
     for (const slot of ['forward','leftWing','rightWing']){
-      if (a.equipped[slot] === selectedRosterId) a.equipped[slot] = null;
+      if (a.equipped[slot] && selectedRosterIds.has(a.equipped[slot])){
+        a.equipped[slot] = null;
+      }
     }
-    a.players.splice(idx, 1);
-    a.keys += SELL_PRICE;
-    selectedRosterId = null;
+    // Remove selected players in one pass.
+    a.players = a.players.filter(p => !selectedRosterIds.has(p.id));
+    a.keys += total;
+    selectedRosterIds.clear();
     saveDB();
     refreshAccountBars();
     rebuildPlayerGrid();
@@ -4080,9 +4156,9 @@
     if (!slot) return;
     const a = currentAccount();
     if (!a) return;
-    if (!selectedRosterId){
-      // Tap an already-equipped slot to unequip
-      const key = slot.dataset.slot;
+    const key = slot.dataset.slot;
+    if (selectedRosterIds.size === 0){
+      // Nothing selected — tap an equipped slot to unequip it.
       if (a.equipped[key]){
         a.equipped[key] = null;
         saveDB();
@@ -4091,13 +4167,17 @@
       }
       return;
     }
-    // Equip the selected player into this slot, removing them from any other slot
-    const key = slot.dataset.slot;
-    for (const s of ['forward','leftWing','rightWing']){
-      if (a.equipped[s] === selectedRosterId) a.equipped[s] = null;
+    if (selectedRosterIds.size > 1){
+      // Multi-select is for bulk sell. Equipping needs exactly one player.
+      return;
     }
-    a.equipped[key] = selectedRosterId;
-    selectedRosterId = null;
+    const id = selectedRosterIds.values().next().value;
+    // Remove from any other slot first so they don't appear twice.
+    for (const s of ['forward','leftWing','rightWing']){
+      if (a.equipped[s] === id) a.equipped[s] = null;
+    }
+    a.equipped[key] = id;
+    selectedRosterIds.clear();
     saveDB();
     rebuildPlayerGrid();
     refreshEquipRow();
@@ -4108,7 +4188,7 @@
   });
   function showRoster(){
     refreshAccountBars();
-    selectedRosterId = null;
+    selectedRosterIds.clear();
     rebuildPlayerGrid();
     refreshEquipRow();
     hideMainMenu();
