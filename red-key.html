@@ -3353,12 +3353,11 @@
     // notify the server that we're ready to advance and let it close the UI.
     if (mpMatchStarted){
       if (!clash.resolved) return; // wait for server's clash-outcome
-      // Server will broadcast 'clash-dismiss' to both sides after applying.
-      // Tap is just a request — fire once, then wait.
-      if (!clash._sentDismiss){
-        clash._sentDismiss = true;
-        wsSend({ type: 'clash-dismiss' });
-      }
+      // Allow re-tapping: if the first dismiss got dropped (slow link, server
+      // hiccup), the user can tap again and we'll resend. The server is
+      // idempotent — once it applies the outcome and broadcasts, repeat
+      // dismisses are quietly ignored.
+      wsSend({ type: 'clash-dismiss' });
       return;
     }
     // Practice (single-player) path
@@ -4251,26 +4250,13 @@
   window.addEventListener('beforeunload', () => { stopMatchHeartbeat(); });
 
   function forceLoseMatch(){
-    // Auto-loss: 0 keys, opponent gets a 'match-end' so they bounce out too.
-    mpMatchStarted = false;
-    mpModeActive = false;
-    animating = false;
-    actionRuntime = null;
-    clash = null;
-    qteOverlay.classList.remove('on');
-    lockBtn.disabled = false;
-    if (mpPartner){
-      mpSend({ type:'match-end', from: currentUser, to: mpPartner.username });
-    }
-    mpPartner = null;
-    mpMyAimsLocked = null;
-    mpOpponentAimsLocked = null;
-    stopMatchHeartbeat();
-    stopTurnTimer();
-    if (resetBtn) resetBtn.style.display = '';
-    if (quitBtn) quitBtn.style.display = 'none';
-    hint.textContent = 'Match abandoned · 0 🔑';
-    setTimeout(() => showMainMenu(), 1400);
+    // Auto-loss: tell the server to terminate the match. The server's
+    // match-quit handler awards keys, broadcasts match-end to both sides,
+    // and cleans up. We DON'T reset local state here — we wait for the
+    // server's match-end to come back, which reuses the same teardown path
+    // as a normal end-of-match. This way the server is always the single
+    // source of truth on whether a match is alive.
+    if (mpMatchStarted) wsSend({ type: 'match-quit' });
   }
 
   function getMyEquippedPlayers(){
@@ -4423,8 +4409,13 @@
         break;
       }
       case 'clash-dismiss': {
-        if (!clash) break;
-        qteOverlay.classList.remove('on');
+        // Always tear down the overlay even if `clash` is already null —
+        // covers cases where the local state was cleared early (resume,
+        // race conditions) but the broadcast still arrives.
+        if (qteOverlay) qteOverlay.classList.remove('on');
+        if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
+        if (clash && clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
+        if (clash && clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
         clash = null;
         break;
       }
@@ -4685,6 +4676,14 @@
     animating = !!msg.animating;
     mpMyAimsLocked = msg.iLocked ? { aims: {}, ballAim: null, mode: 'kick' } : null;
     mpOpponentAimsLocked = null;
+    // Always tear down any stale clash UI on (re)entry. If the server is in a
+    // clash, its next clash-start broadcast will rebuild it; if not, we don't
+    // want a leftover overlay trapping the user.
+    if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
+    if (clash && clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
+    if (clash && clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
+    clash = null;
+    if (qteOverlay) qteOverlay.classList.remove('on');
     if (msg.state) applyTurnState(msg.state);
     buildRoster();
     refreshRosterUI();
