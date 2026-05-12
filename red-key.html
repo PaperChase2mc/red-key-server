@@ -1003,6 +1003,51 @@
   }
   .account-bar .keys{color: var(--yellow); font-weight: 700}
 
+  /* Roster controls row: sort + sell. */
+  .roster-controls{
+    display:flex; align-items:center; gap:8px;
+    margin: 6px 0 10px;
+    flex-wrap:wrap;
+  }
+  .roster-controls .label{
+    font-family:"JetBrains Mono", monospace;
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.22em;
+    color: var(--ink-dimmer);
+    margin-right: 4px;
+  }
+  .roster-controls .sort-btn{
+    padding: 6px 10px;
+    border: 1px solid var(--line-2);
+    background: var(--surface);
+    color: var(--ink-dim);
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .roster-controls .sort-btn:hover{ background: var(--surface-2); color: var(--ink) }
+  .roster-controls .sort-btn.active{
+    background: var(--ink);
+    color: #14110a;
+    border-color: var(--ink);
+  }
+  .roster-controls .sell-btn{
+    margin-left: auto;
+    padding: 8px 14px;
+    border: 1px solid var(--red-deep);
+    background: var(--surface);
+    color: var(--red);
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10.5px; letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .roster-controls .sell-btn:hover{
+    background: var(--red-deep); color: var(--ink); border-color: var(--red);
+  }
+  .roster-controls .sell-btn[hidden]{display:none}
+
   /* Player cards (collection) */
   .player-grid{
     display:grid;grid-template-columns: 1fr 1fr;gap:10px;
@@ -1700,6 +1745,12 @@
       </div>
     </div>
     <div class="overlay-sub">Tap a player, then a slot to equip</div>
+    <div class="roster-controls" id="roster-controls">
+      <span class="label">Sort by Rarity</span>
+      <button class="sort-btn" id="roster-sort-desc" type="button">Best → Worst</button>
+      <button class="sort-btn" id="roster-sort-asc" type="button">Worst → Best</button>
+      <button class="sell-btn" id="roster-sell" type="button" hidden>Sell · 50 🔑</button>
+    </div>
     <div class="player-grid" id="player-grid"></div>
     <button class="ghost-btn" style="margin-top:14px" id="roster-back" type="button">← Menu</button>
   </div>
@@ -3922,15 +3973,48 @@
 
   // ── Roster screen ───────────────────────────────────
   let selectedRosterId = null;
+  let rosterSort = 'none'; // 'none' | 'desc' (best-first) | 'asc' (worst-first)
+  const SELL_PRICE = 50;
+  function rarityRank(r){
+    return { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 }[r] || 0;
+  }
+  function sortedRosterPlayers(a){
+    if (!a) return [];
+    if (rosterSort === 'none') return a.players;
+    const copy = a.players.slice();
+    copy.sort((p1, p2) => {
+      const r1 = rarityRank(p1.rarity);
+      const r2 = rarityRank(p2.rarity);
+      if (r1 !== r2) return rosterSort === 'desc' ? r2 - r1 : r1 - r2;
+      // Tiebreaker: total stars, descending for both modes (better player surfaces first within a rarity)
+      const s1 = (p1.stats.speed|0) + (p1.stats.shooting|0) + (p1.stats.stamina|0);
+      const s2 = (p2.stats.speed|0) + (p2.stats.shooting|0) + (p2.stats.stamina|0);
+      return rosterSort === 'desc' ? s2 - s1 : s1 - s2;
+    });
+    return copy;
+  }
+  function refreshSortButtons(){
+    const descBtn = document.getElementById('roster-sort-desc');
+    const ascBtn  = document.getElementById('roster-sort-asc');
+    if (descBtn) descBtn.classList.toggle('active', rosterSort === 'desc');
+    if (ascBtn)  ascBtn.classList.toggle('active',  rosterSort === 'asc');
+  }
+  function refreshSellButton(){
+    const sellBtn = document.getElementById('roster-sell');
+    if (!sellBtn) return;
+    sellBtn.hidden = !selectedRosterId;
+  }
   function rebuildPlayerGrid(){
     playerGrid.innerHTML = '';
     const a = currentAccount();
     if (!a) return;
+    refreshSortButtons();
+    refreshSellButton();
     if (a.players.length === 0){
       playerGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--ink-dimmer);padding:20px;font-family:JetBrains Mono,monospace;font-size:11px;letter-spacing:0.18em">No players yet — open a pack in the Store.</div>';
       return;
     }
-    for (const p of a.players){
+    for (const p of sortedRosterPlayers(a)){
       const tile = document.createElement('div');
       let equippedSlot = '';
       if (a.equipped.forward === p.id) equippedSlot = 'F';
@@ -3946,6 +4030,35 @@
       playerGrid.appendChild(tile);
     }
   }
+  // Sort + sell wiring.
+  document.getElementById('roster-sort-desc').addEventListener('click', () => {
+    rosterSort = (rosterSort === 'desc') ? 'none' : 'desc';
+    rebuildPlayerGrid();
+  });
+  document.getElementById('roster-sort-asc').addEventListener('click', () => {
+    rosterSort = (rosterSort === 'asc') ? 'none' : 'asc';
+    rebuildPlayerGrid();
+  });
+  document.getElementById('roster-sell').addEventListener('click', () => {
+    const a = currentAccount();
+    if (!a || !selectedRosterId) return;
+    const idx = a.players.findIndex(p => p.id === selectedRosterId);
+    if (idx < 0) return;
+    const player = a.players[idx];
+    const ok = confirm(`Sell ${player.name} (#${player.num}, ${player.rarity}) for ${SELL_PRICE} keys?`);
+    if (!ok) return;
+    // Unequip if currently equipped, then remove and pay out.
+    for (const slot of ['forward','leftWing','rightWing']){
+      if (a.equipped[slot] === selectedRosterId) a.equipped[slot] = null;
+    }
+    a.players.splice(idx, 1);
+    a.keys += SELL_PRICE;
+    selectedRosterId = null;
+    saveDB();
+    refreshAccountBars();
+    rebuildPlayerGrid();
+    refreshEquipRow();
+  });
   function refreshEquipRow(){
     const a = currentAccount();
     equipRow.querySelectorAll('.equip-slot').forEach(slot => {

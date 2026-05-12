@@ -5,6 +5,8 @@ All notable changes to Red Key. Most recent first.
 ## 2026-05-12
 
 ### Added
+- Roster has sort buttons: "Best → Worst" and "Worst → Best" by rarity. Click again to clear and return to the default order.
+- You can sell players from your roster for 50 keys each. Tap a player to select them, then tap the red Sell button. Confirms before selling. Equipped players are automatically unequipped first.
 - When your opponent quits a match, a popup appears explaining what happened and how many keys you won. The match automatically ends for you as well, then drops you back at the menu.
 - Invite-by-name has autocomplete. Start typing a player name and a list of up to 10 matching players appears under the input. Click one to send the invite.
 - Invite-created matches don't pay keys to either side — they're for friendly play. Queue matches still pay 200/25.
