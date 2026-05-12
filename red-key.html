@@ -4679,6 +4679,12 @@
     playerAims = freshAims();
     ballAim = null;
     frozen = freshFrozen();
+    // Reset transient mid-turn flags. On a fresh match these are no-ops; on a
+    // RESUME (server transferred this match to us after a tab/network hop) the
+    // server tells us the real state via msg.animating / msg.iLocked.
+    animating = !!msg.animating;
+    mpMyAimsLocked = msg.iLocked ? { aims: {}, ballAim: null, mode: 'kick' } : null;
+    mpOpponentAimsLocked = null;
     if (msg.state) applyTurnState(msg.state);
     buildRoster();
     refreshRosterUI();

@@ -170,7 +170,14 @@ function buildMatchStart(match, role){
     players: serializeAllPlayers(match),
     state: snapshotState(match),
     turn: match.turn,
-    target: SCORE_TARGET
+    target: SCORE_TARGET,
+    // Resume aids: true if this side has already submitted aims for this turn,
+    // and whether the server is currently animating. The client uses these to
+    // restore the local "locked-in" UI on a reconnect instead of letting the
+    // user think they're between turns when they aren't.
+    animating: !!match.animating,
+    iLocked: role === 'us' ? !!match.aimsA : !!match.aimsB,
+    oppLocked: role === 'us' ? !!match.aimsB : !!match.aimsA
   };
 }
 function serializeAllPlayers(match){
