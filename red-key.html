@@ -1264,6 +1264,78 @@
   .admin-section textarea{min-height: 60px;resize: vertical}
   .admin-section .row2{display:grid;grid-template-columns: 1fr 1fr;gap: 8px;margin-bottom: 6px}
   .admin-section .ability-list{display:flex;flex-direction:column;gap:6px}
+
+  /* Phase 2 Skill Builder: dynamic zone / requirement / reward rows. */
+  .sb-segs{display:flex;gap:6px;margin-bottom:8px}
+  .sb-segs button{
+    flex:1;
+    padding:7px 10px;
+    border:1px solid var(--line-2);
+    background: var(--surface);
+    color: var(--ink-dim);
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    cursor:pointer;
+  }
+  .sb-segs button.on{
+    background: var(--ink); color: #14110a; border-color: var(--ink);
+  }
+  .sb-section-list{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+  .sb-section-list:empty{display:none}
+  .sb-section-empty{
+    color: var(--ink-dimmer);
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.16em;
+    padding: 6px 0;
+  }
+  .sb-add-btn{
+    padding: 7px 12px;
+    border: 1px dashed var(--line-2);
+    background: transparent;
+    color: var(--ink-dim);
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    cursor: pointer;
+  }
+  .sb-add-btn:hover{background: var(--surface); color: var(--ink); border-color: var(--ink-dim)}
+  .sb-row{
+    background: var(--bg);
+    border: 1px solid var(--line);
+    padding: 10px;
+    display:grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items:start;
+  }
+  .sb-row-grid{
+    display:grid;grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));gap: 8px;
+  }
+  .sb-row label{
+    display:flex;flex-direction:column;gap:4px;
+    font-family:"JetBrains Mono", monospace;
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.18em;
+    color: var(--ink-dimmer);
+  }
+  .sb-row label input, .sb-row label select{
+    margin-bottom: 0 !important;
+    font-size: 12px;
+  }
+  .sb-row input[type="color"]{
+    width: 100%; height: 32px; padding: 2px; border:1px solid var(--line-2);
+    background: var(--bg); cursor:pointer;
+  }
+  .sb-row .sb-del{
+    align-self:start;
+    width: 28px; height: 28px;
+    border: 1px solid var(--red-deep); background: transparent;
+    color: var(--red); cursor: pointer;
+    font-size: 14px; line-height: 1;
+  }
+  .sb-row .sb-del:hover{background: var(--red-deep); color: var(--ink)}
+  .sb-zone-pill{
+    display:inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid currentColor; margin-right: 6px; vertical-align: middle;
+  }
   .admin-section .ability-row{
     display:flex;align-items:center;justify-content:space-between;
     padding: 8px 10px;background: var(--bg);border:1px solid var(--line);
@@ -2016,7 +2088,7 @@
       <input type="hidden" id="sb-id" />
       <div class="row2" style="margin-bottom:8px">
         <input type="text" id="sb-name" placeholder="Name (required)" maxlength="32" />
-        <select id="sb-trigger">
+        <select id="sb-trigger" title="Legacy trigger (shown on player cards)">
           <option value="on-kick">On Kick</option>
           <option value="on-clash-win">On Clash Win</option>
           <option value="on-clash-lose">On Clash Lose</option>
@@ -2026,7 +2098,7 @@
       </div>
       <textarea id="sb-desc" placeholder="Description (optional)" maxlength="160" style="width:100%;margin-bottom:8px"></textarea>
       <div class="row2" style="margin-bottom:10px">
-        <select id="sb-effect">
+        <select id="sb-effect" title="Legacy effect (shown on player cards)">
           <option value="speed-boost">Speed Boost</option>
           <option value="kick-power">Kick Power</option>
           <option value="stamina-boost">Stamina Boost</option>
@@ -2036,6 +2108,50 @@
         </select>
         <input type="number" id="sb-magnitude" placeholder="Magnitude (e.g. 25)" min="0" max="999" />
       </div>
+    </div>
+
+    <div class="admin-section">
+      <h3>Behavior</h3>
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <div class="sb-row label" style="display:block;color:var(--ink-dimmer);font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:4px">Scope</div>
+          <div class="sb-segs">
+            <button id="sb-scope-on"  type="button" class="on">On Ball</button>
+            <button id="sb-scope-off" type="button">Off Ball</button>
+          </div>
+        </div>
+        <div style="flex:1;min-width:160px">
+          <div style="color:var(--ink-dimmer);font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:4px">Cooldown (turns)</div>
+          <input type="number" id="sb-cooldown" min="0" max="20" value="0" />
+        </div>
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <h3>Zones</h3>
+      <div id="sb-zones-list" class="sb-section-list"></div>
+      <button id="sb-add-zone" class="sb-add-btn" type="button">+ Add Zone</button>
+    </div>
+
+    <div class="admin-section">
+      <h3>Requirements</h3>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.16em;color:var(--ink-dimmer);margin-bottom:8px;text-transform:uppercase">
+        Conditions that must be met on the next turn for rewards to fire.
+      </div>
+      <div id="sb-reqs-list" class="sb-section-list"></div>
+      <button id="sb-add-req" class="sb-add-btn" type="button">+ Add Requirement</button>
+    </div>
+
+    <div class="admin-section">
+      <h3>Rewards</h3>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.16em;color:var(--ink-dimmer);margin-bottom:8px;text-transform:uppercase">
+        Effects that fire when requirements are met (or every cooldown if no requirements).
+      </div>
+      <div id="sb-rewards-list" class="sb-section-list"></div>
+      <button id="sb-add-reward" class="sb-add-btn" type="button">+ Add Reward</button>
+    </div>
+
+    <div class="admin-section" style="background:transparent;border:none;padding:0">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="primary-btn" id="sb-save" type="button">Save Ability</button>
         <button class="ghost-btn"   id="sb-clear" type="button">Clear Form</button>
@@ -2182,7 +2298,8 @@
           description: row.description || '',
           trigger: row.trigger,
           effect: row.effect,
-          magnitude: row.magnitude | 0
+          magnitude: row.magnitude | 0,
+          config: row.config || null
         };
       }
     } catch (e){ console.warn('loadAbilities crashed:', e); }
@@ -5380,14 +5497,318 @@
   }
 
   // ── Skill Builder (admin-only sub-screen) ──────────────
-  const sbIdEl    = document.getElementById('sb-id');
-  const sbNameEl  = document.getElementById('sb-name');
-  const sbDescEl  = document.getElementById('sb-desc');
-  const sbTrigEl  = document.getElementById('sb-trigger');
-  const sbEffEl   = document.getElementById('sb-effect');
-  const sbMagEl   = document.getElementById('sb-magnitude');
-  const sbMsgEl   = document.getElementById('sb-msg');
-  const sbTitleEl = document.getElementById('sb-form-title');
+  const sbIdEl       = document.getElementById('sb-id');
+  const sbNameEl     = document.getElementById('sb-name');
+  const sbDescEl     = document.getElementById('sb-desc');
+  const sbTrigEl     = document.getElementById('sb-trigger');
+  const sbEffEl      = document.getElementById('sb-effect');
+  const sbMagEl      = document.getElementById('sb-magnitude');
+  const sbMsgEl      = document.getElementById('sb-msg');
+  const sbTitleEl    = document.getElementById('sb-form-title');
+  const sbScopeOn    = document.getElementById('sb-scope-on');
+  const sbScopeOff   = document.getElementById('sb-scope-off');
+  const sbCooldown   = document.getElementById('sb-cooldown');
+  const sbZonesList  = document.getElementById('sb-zones-list');
+  const sbReqsList   = document.getElementById('sb-reqs-list');
+  const sbRewardsList = document.getElementById('sb-rewards-list');
+
+  // The Phase 2 schema lives in this object while the form is open. On save
+  // it's serialized into the abilities.config jsonb column.
+  function defaultSkillConfig(){
+    return {
+      scope: 'on-ball',
+      cooldownTurns: 0,
+      zones: [],
+      requirements: [],
+      rewards: []
+    };
+  }
+  let currentSkillConfig = defaultSkillConfig();
+  function newLocalId(prefix){
+    return prefix + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  const ZONE_TARGETS = [
+    ['teammate',         'Teammate'],
+    ['enemy',            'Enemy'],
+    ['ball',             'Ball'],
+    ['enemy-with-ball',  'Enemy w/ Ball'],
+    ['self',             'Self']
+  ];
+  const REWARD_KINDS = [
+    ['stat-boost',         'Stat Boost'],
+    ['give-ball',          'Give Ball'],
+    ['teleport-to-ball',   'Teleport to Ball'],
+    ['teleport-to-zone',   'Teleport to Zone'],
+    ['auto-clash',         'Auto-Clash (Enemy in Zone)']
+  ];
+  const REQ_KINDS = [
+    ['clash-and-win', 'Clash and Win'],
+    ['zone',          'Zone Condition']
+  ];
+
+  // ── Scope segmented buttons ─────────────────
+  sbScopeOn.addEventListener('click', () => {
+    currentSkillConfig.scope = 'on-ball';
+    sbScopeOn.classList.add('on');
+    sbScopeOff.classList.remove('on');
+  });
+  sbScopeOff.addEventListener('click', () => {
+    currentSkillConfig.scope = 'off-ball';
+    sbScopeOff.classList.add('on');
+    sbScopeOn.classList.remove('on');
+  });
+  sbCooldown.addEventListener('input', () => {
+    currentSkillConfig.cooldownTurns = Math.max(0, parseInt(sbCooldown.value || '0', 10) | 0);
+  });
+
+  // ── Zones ────────────────────────────────────
+  function renderZonesList(){
+    sbZonesList.innerHTML = '';
+    if (currentSkillConfig.zones.length === 0){
+      const empty = document.createElement('div');
+      empty.className = 'sb-section-empty';
+      empty.textContent = 'No zones — add one to use zone-based requirements or teleport rewards.';
+      sbZonesList.appendChild(empty);
+      return;
+    }
+    currentSkillConfig.zones.forEach((zone, idx) => {
+      const row = document.createElement('div');
+      row.className = 'sb-row';
+      const offsetsDisabled = zone.placement === 'player-placed';
+      const targetOptions = ZONE_TARGETS.map(([v, label]) =>
+        `<option value="${v}" ${zone.target === v ? 'selected' : ''}>${label}</option>`
+      ).join('');
+      row.innerHTML = `
+        <div class="sb-row-grid">
+          <label>Label
+            <input type="text" data-field="label" maxlength="24" value="${escapeHtml(zone.label || '')}" placeholder="e.g. Front zone" />
+          </label>
+          <label>Placement
+            <select data-field="placement">
+              <option value="fixed-offset"  ${zone.placement === 'fixed-offset'  ? 'selected' : ''}>Fixed Offset</option>
+              <option value="player-placed" ${zone.placement === 'player-placed' ? 'selected' : ''}>Player Places</option>
+            </select>
+          </label>
+          <label>Offset X
+            <input type="number" data-field="offsetX" value="${zone.offsetX | 0}" ${offsetsDisabled ? 'disabled' : ''} />
+          </label>
+          <label>Offset Y
+            <input type="number" data-field="offsetY" value="${zone.offsetY | 0}" ${offsetsDisabled ? 'disabled' : ''} />
+          </label>
+          <label>Radius
+            <input type="number" data-field="radius" min="10" max="500" value="${zone.radius | 0}" />
+          </label>
+          <label>Color
+            <input type="color" data-field="color" value="${zone.color || '#ef2b3a'}" />
+          </label>
+          <label>Target
+            <select data-field="target">${targetOptions}</select>
+          </label>
+        </div>
+        <button class="sb-del" type="button" title="Delete zone">×</button>
+      `;
+      row.querySelectorAll('[data-field]').forEach(el => {
+        el.addEventListener('input', () => {
+          const f = el.dataset.field;
+          if (f === 'offsetX' || f === 'offsetY' || f === 'radius'){
+            zone[f] = parseInt(el.value || '0', 10) | 0;
+          } else {
+            zone[f] = el.value;
+          }
+          if (f === 'placement') renderZonesList(); // re-render to disable offsets
+        });
+      });
+      row.querySelector('.sb-del').addEventListener('click', () => {
+        currentSkillConfig.zones.splice(idx, 1);
+        // Clean up any zoneId references in reqs/rewards pointing at this zone.
+        const goneId = zone.id;
+        currentSkillConfig.requirements = currentSkillConfig.requirements
+          .filter(r => !(r.kind === 'zone' && r.zoneId === goneId));
+        currentSkillConfig.rewards.forEach(r => {
+          if ((r.kind === 'teleport-to-zone' || r.kind === 'auto-clash') && r.zoneId === goneId){
+            r.zoneId = '';
+          }
+        });
+        renderZonesList();
+        renderRequirementsList();
+        renderRewardsList();
+      });
+      sbZonesList.appendChild(row);
+    });
+  }
+  document.getElementById('sb-add-zone').addEventListener('click', () => {
+    currentSkillConfig.zones.push({
+      id: newLocalId('z'),
+      label: 'Zone ' + (currentSkillConfig.zones.length + 1),
+      placement: 'fixed-offset',
+      offsetX: 0,
+      offsetY: 0,
+      radius: 60,
+      color: '#ef2b3a',
+      target: 'enemy'
+    });
+    renderZonesList();
+    renderRequirementsList(); // zone selectors elsewhere need refreshing
+    renderRewardsList();
+  });
+
+  // ── Requirements ─────────────────────────────
+  function zoneOptionsHtml(selectedId){
+    if (currentSkillConfig.zones.length === 0){
+      return '<option value="">(no zones — add one above)</option>';
+    }
+    return currentSkillConfig.zones.map(z =>
+      `<option value="${z.id}" ${z.id === selectedId ? 'selected' : ''}>${escapeHtml(z.label || z.id)}</option>`
+    ).join('');
+  }
+  function renderRequirementsList(){
+    sbReqsList.innerHTML = '';
+    if (currentSkillConfig.requirements.length === 0){
+      const empty = document.createElement('div');
+      empty.className = 'sb-section-empty';
+      empty.textContent = 'No requirements — rewards fire every turn the ability is off cooldown.';
+      sbReqsList.appendChild(empty);
+      return;
+    }
+    currentSkillConfig.requirements.forEach((req, idx) => {
+      const row = document.createElement('div');
+      row.className = 'sb-row';
+      const kindOptions = REQ_KINDS.map(([v, label]) =>
+        `<option value="${v}" ${req.kind === v ? 'selected' : ''}>${label}</option>`
+      ).join('');
+      const zoneRow = req.kind === 'zone'
+        ? `<label>Zone <select data-field="zoneId">${zoneOptionsHtml(req.zoneId)}</select></label>`
+        : '';
+      row.innerHTML = `
+        <div class="sb-row-grid">
+          <label>Kind
+            <select data-field="kind">${kindOptions}</select>
+          </label>
+          ${zoneRow}
+        </div>
+        <button class="sb-del" type="button" title="Delete requirement">×</button>
+      `;
+      row.querySelectorAll('[data-field]').forEach(el => {
+        el.addEventListener('input', () => {
+          const f = el.dataset.field;
+          if (f === 'kind'){
+            req.kind = el.value;
+            if (req.kind === 'zone' && !req.zoneId){
+              req.zoneId = currentSkillConfig.zones[0] ? currentSkillConfig.zones[0].id : '';
+            }
+            renderRequirementsList();
+          } else {
+            req[f] = el.value;
+          }
+        });
+      });
+      row.querySelector('.sb-del').addEventListener('click', () => {
+        currentSkillConfig.requirements.splice(idx, 1);
+        renderRequirementsList();
+      });
+      sbReqsList.appendChild(row);
+    });
+  }
+  document.getElementById('sb-add-req').addEventListener('click', () => {
+    currentSkillConfig.requirements.push({ kind: 'clash-and-win' });
+    renderRequirementsList();
+  });
+
+  // ── Rewards ──────────────────────────────────
+  function rewardExtraHtml(reward){
+    if (reward.kind === 'stat-boost'){
+      const stat = reward.stat || 'speed';
+      const amt  = (typeof reward.amount === 'number') ? reward.amount : 1;
+      return `
+        <label>Stat
+          <select data-field="stat">
+            <option value="speed"    ${stat === 'speed'    ? 'selected' : ''}>Speed</option>
+            <option value="shooting" ${stat === 'shooting' ? 'selected' : ''}>Shooting</option>
+            <option value="stamina"  ${stat === 'stamina'  ? 'selected' : ''}>Stamina</option>
+          </select>
+        </label>
+        <label>Amount (can exceed 5)
+          <input type="number" data-field="amount" min="-20" max="20" value="${amt | 0}" />
+        </label>
+      `;
+    }
+    if (reward.kind === 'teleport-to-zone' || reward.kind === 'auto-clash'){
+      return `<label>Zone <select data-field="zoneId">${zoneOptionsHtml(reward.zoneId)}</select></label>`;
+    }
+    return '';
+  }
+  function renderRewardsList(){
+    sbRewardsList.innerHTML = '';
+    if (currentSkillConfig.rewards.length === 0){
+      const empty = document.createElement('div');
+      empty.className = 'sb-section-empty';
+      empty.textContent = 'No rewards — this ability does nothing yet. Add at least one to make it useful.';
+      sbRewardsList.appendChild(empty);
+      return;
+    }
+    currentSkillConfig.rewards.forEach((reward, idx) => {
+      const row = document.createElement('div');
+      row.className = 'sb-row';
+      const kindOptions = REWARD_KINDS.map(([v, label]) =>
+        `<option value="${v}" ${reward.kind === v ? 'selected' : ''}>${label}</option>`
+      ).join('');
+      row.innerHTML = `
+        <div class="sb-row-grid">
+          <label>Kind
+            <select data-field="kind">${kindOptions}</select>
+          </label>
+          ${rewardExtraHtml(reward)}
+        </div>
+        <button class="sb-del" type="button" title="Delete reward">×</button>
+      `;
+      row.querySelectorAll('[data-field]').forEach(el => {
+        el.addEventListener('input', () => {
+          const f = el.dataset.field;
+          if (f === 'kind'){
+            reward.kind = el.value;
+            if (reward.kind === 'stat-boost'){
+              reward.stat = reward.stat || 'speed';
+              if (typeof reward.amount !== 'number') reward.amount = 1;
+            }
+            if (reward.kind === 'teleport-to-zone' || reward.kind === 'auto-clash'){
+              if (!reward.zoneId) reward.zoneId = currentSkillConfig.zones[0] ? currentSkillConfig.zones[0].id : '';
+            }
+            renderRewardsList();
+          } else if (f === 'amount'){
+            reward.amount = parseInt(el.value || '0', 10) | 0;
+          } else {
+            reward[f] = el.value;
+          }
+        });
+      });
+      row.querySelector('.sb-del').addEventListener('click', () => {
+        currentSkillConfig.rewards.splice(idx, 1);
+        renderRewardsList();
+      });
+      sbRewardsList.appendChild(row);
+    });
+  }
+  document.getElementById('sb-add-reward').addEventListener('click', () => {
+    currentSkillConfig.rewards.push({ kind: 'stat-boost', stat: 'speed', amount: 1 });
+    renderRewardsList();
+  });
+
+  function escapeHtml(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function renderConfigSections(){
+    // Sync the scope buttons with state.
+    sbScopeOn.classList.toggle('on',  currentSkillConfig.scope !== 'off-ball');
+    sbScopeOff.classList.toggle('on', currentSkillConfig.scope === 'off-ball');
+    sbCooldown.value = String(currentSkillConfig.cooldownTurns | 0);
+    renderZonesList();
+    renderRequirementsList();
+    renderRewardsList();
+  }
 
   function clearSkillForm(){
     sbIdEl.value = '';
@@ -5398,6 +5819,8 @@
     sbMagEl.value  = '';
     sbMsgEl.textContent = '';
     sbTitleEl.textContent = 'New Ability';
+    currentSkillConfig = defaultSkillConfig();
+    renderConfigSections();
   }
   function fillSkillFormFromAbility(a){
     sbIdEl.value = a.id;
@@ -5408,6 +5831,13 @@
     sbMagEl.value  = String(a.magnitude | 0);
     sbMsgEl.textContent = '';
     sbTitleEl.textContent = 'Edit Ability';
+    // Defensive deep-copy of the saved config so edits don't mutate the cache.
+    const cfg = a.config && typeof a.config === 'object' ? JSON.parse(JSON.stringify(a.config)) : null;
+    currentSkillConfig = Object.assign(defaultSkillConfig(), cfg || {});
+    currentSkillConfig.zones        = currentSkillConfig.zones        || [];
+    currentSkillConfig.requirements = currentSkillConfig.requirements || [];
+    currentSkillConfig.rewards      = currentSkillConfig.rewards      || [];
+    renderConfigSections();
   }
   function renderSkillList(){
     if (!sbList) return;
@@ -5421,11 +5851,23 @@
       const a = db.abilities[id];
       const row = document.createElement('div');
       row.className = 'ability-row';
+      const cfg = a.config || {};
+      const pills = [];
+      pills.push(`<span class="effect-pill">${a.trigger}</span>`);
+      pills.push(`<span class="effect-pill">${a.effect} · ${a.magnitude}</span>`);
+      if (cfg.scope) pills.push(`<span class="effect-pill">${cfg.scope}</span>`);
+      if (cfg.cooldownTurns) pills.push(`<span class="effect-pill">cd ${cfg.cooldownTurns}t</span>`);
+      const zones = (cfg.zones || []).length;
+      const reqs  = (cfg.requirements || []).length;
+      const rews  = (cfg.rewards || []).length;
+      if (zones) pills.push(`<span class="effect-pill">${zones} zone${zones === 1 ? '' : 's'}</span>`);
+      if (reqs)  pills.push(`<span class="effect-pill">${reqs} req${reqs === 1 ? '' : 's'}</span>`);
+      if (rews)  pills.push(`<span class="effect-pill">${rews} reward${rews === 1 ? '' : 's'}</span>`);
       row.innerHTML = `
         <div class="ainfo">
-          <span class="aname">${a.name}</span>
-          <span class="adesc">${a.description || ''}</span>
-          <span><span class="effect-pill">${a.trigger}</span><span class="effect-pill">${a.effect} · ${a.magnitude}</span></span>
+          <span class="aname">${escapeHtml(a.name)}</span>
+          <span class="adesc">${escapeHtml(a.description || '')}</span>
+          <span>${pills.join('')}</span>
         </div>
         <div style="display:flex;gap:6px">
           <button class="ghost-btn" data-sb-edit="${id}" type="button">Edit</button>
@@ -5457,15 +5899,36 @@
       });
     });
   }
+  function validateSkillConfig(cfg){
+    // Catch the easy mistakes before we hit Supabase — saves a round trip
+    // and gives the admin a specific message.
+    for (const r of cfg.requirements){
+      if (r.kind === 'zone' && !r.zoneId){
+        return 'A zone requirement is missing its target zone.';
+      }
+    }
+    for (const r of cfg.rewards){
+      if ((r.kind === 'teleport-to-zone' || r.kind === 'auto-clash') && !r.zoneId){
+        return 'A reward is missing its target zone.';
+      }
+      if (r.kind === 'stat-boost' && (!r.stat || typeof r.amount !== 'number')){
+        return 'A stat-boost reward is missing its stat or amount.';
+      }
+    }
+    return '';
+  }
   async function saveSkillFromForm(){
     const name = sbNameEl.value.trim();
     if (!name){ sbMsgEl.textContent = 'Name is required.'; return; }
+    const cfgError = validateSkillConfig(currentSkillConfig);
+    if (cfgError){ sbMsgEl.textContent = cfgError; return; }
     const payload = {
       name,
       description: sbDescEl.value.trim() || null,
       trigger: sbTrigEl.value,
       effect:  sbEffEl.value,
-      magnitude: Math.max(0, parseInt(sbMagEl.value || '0', 10) | 0)
+      magnitude: Math.max(0, parseInt(sbMagEl.value || '0', 10) | 0),
+      config: JSON.parse(JSON.stringify(currentSkillConfig))
     };
     const editingId = sbIdEl.value || '';
     sbMsgEl.textContent = editingId ? 'Saving…' : 'Creating…';
@@ -5485,7 +5948,8 @@
         description: row.description || '',
         trigger: row.trigger,
         effect: row.effect,
-        magnitude: row.magnitude | 0
+        magnitude: row.magnitude | 0,
+        config: row.config || null
       };
       sbMsgEl.textContent = editingId ? `Updated "${row.name}".` : `Created "${row.name}".`;
       clearSkillForm();

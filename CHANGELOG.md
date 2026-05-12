@@ -5,6 +5,10 @@ All notable changes to Red Key. Most recent first.
 ## 2026-05-12
 
 ### Added
+- Skill Builder editor expanded: each ability can now be marked On-Ball or Off-Ball, given a cooldown in turns, and configured with zones, requirements, and rewards. The list view shows a quick summary of each ability's setup. (These settings save to the database but don't yet affect gameplay — Phase 3 wires them into the simulation.)
+- Zones live in a list on the ability. Each zone has a label, fixed-offset coordinates or a "Player Places" mode, a radius, a color picker, and a target type (teammate, enemy, ball, enemy with ball, or self).
+- Requirements list lets you require a clash win or that a specific zone's condition is met. You can stack multiple requirements per ability.
+- Rewards list supports stat boosts (any amount, can go past 5), give-ball, teleport-to-ball, teleport-to-zone, and auto-clash with the enemy in a zone. Multiple rewards per ability.
 - Skill Builder is now its own admin sub-screen. Open it from a button in the admin panel.
 - Abilities created in the Skill Builder are saved to the database and shared across all admins. They show up correctly on player cards from any browser or device.
 - You can edit existing abilities (click Edit next to one in the list) and delete them. Player references to deleted abilities show as "?" until the player is replaced.
