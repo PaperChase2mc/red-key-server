@@ -115,7 +115,7 @@ function makePlayerSlot(slotId, equipped){
   };
 }
 
-function createMatch(wsA, wsB){
+function createMatch(wsA, wsB, opts){
   const cA = clientsByWs.get(wsA);
   const cB = clientsByWs.get(wsB);
   if (!cA || !cB) return null;
@@ -126,8 +126,10 @@ function createMatch(wsA, wsB){
   else                            { usClient = cB;  themClient = cA; }
 
   const id = String(nextMatchId++);
+  const noKeys = !!(opts && opts.noKeys);
   const match = {
     id,
+    noKeys,
     playerA: { ws: usClient.ws,   username: usClient.username,   team: 'us',   equipped: usClient.equipped   || [null,null,null], isAdmin: !!usClient.isAdmin,   tag: usClient.tag   || '' },
     playerB: { ws: themClient.ws, username: themClient.username, team: 'them', equipped: themClient.equipped || [null,null,null], isAdmin: !!themClient.isAdmin, tag: themClient.tag || '' },
     players: {},
@@ -641,9 +643,13 @@ function finishMatch(match){
   const usWon = match.scoreUs >= SCORE_TARGET;
   const aWon = match.playerA.team === 'us' ? usWon : !usWon;
   const bWon = match.playerB.team === 'us' ? usWon : !usWon;
-  send(match.playerA.ws, { type: 'match-end', won: aWon, keys: aWon ? 200 : 25,
+  const winnerKeys = match.noKeys ? 0 : 200;
+  const loserKeys  = match.noKeys ? 0 : 25;
+  send(match.playerA.ws, { type: 'match-end', won: aWon, reason: 'score',
+                            keys: aWon ? winnerKeys : loserKeys, noKeys: match.noKeys,
                             scoreUs: match.scoreUs, scoreThem: match.scoreThem });
-  send(match.playerB.ws, { type: 'match-end', won: bWon, keys: bWon ? 200 : 25,
+  send(match.playerB.ws, { type: 'match-end', won: bWon, reason: 'score',
+                            keys: bWon ? winnerKeys : loserKeys, noKeys: match.noKeys,
                             scoreUs: match.scoreUs, scoreThem: match.scoreThem });
   cleanupMatch(match);
 }
@@ -782,7 +788,8 @@ function handleMessage(ws, msg){
       const targetInfo = clientsByWs.get(target);
       if (targetInfo && targetInfo.matchId) break;
       if (c.matchId) break;
-      createMatch(ws, target);
+      // Invite-created matches don't pay keys to either side.
+      createMatch(ws, target, { noKeys: true });
       break;
     }
     case 'invite-decline': {
@@ -812,8 +819,14 @@ function handleMessage(ws, msg){
       const match = matches.get(c.matchId);
       if (!match) break;
       const oppWs = c.username === match.playerA.username ? match.playerB.ws : match.playerA.ws;
-      send(ws,    { type: 'match-end', won: false, keys: 0, scoreUs: match.scoreUs, scoreThem: match.scoreThem });
-      send(oppWs, { type: 'match-end', won: true,  keys: 200, scoreUs: match.scoreUs, scoreThem: match.scoreThem });
+      const winnerKeys = match.noKeys ? 0 : 200;
+      const quitter = c.username;
+      send(ws,    { type: 'match-end', won: false, reason: 'quit', quitter,
+                     keys: 0, noKeys: match.noKeys,
+                     scoreUs: match.scoreUs, scoreThem: match.scoreThem });
+      send(oppWs, { type: 'match-end', won: true,  reason: 'opponent-quit', quitter,
+                     keys: winnerKeys, noKeys: match.noKeys,
+                     scoreUs: match.scoreUs, scoreThem: match.scoreThem });
       cleanupMatch(match);
       break;
     }

@@ -111,6 +111,45 @@
   }
   @keyframes livePulse{0%,100%{opacity:1}50%{opacity:0.4}}
 
+  /* Invite autocomplete dropdown. */
+  .invite-suggest{
+    position: relative;
+    margin-top: -8px;
+    margin-bottom: 10px;
+  }
+  .invite-suggest-list{
+    display:none; flex-direction:column;
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    max-height: 240px; overflow-y: auto;
+  }
+  .invite-suggest-list.on{display:flex}
+  .invite-suggest-item{
+    padding: 9px 12px;
+    font-family:"JetBrains Mono", monospace;
+    font-size: 12px; letter-spacing: 0.06em;
+    color: var(--ink);
+    cursor: pointer;
+    border-bottom: 1px solid var(--line);
+    display:flex; align-items:center; gap:8px;
+  }
+  .invite-suggest-item:last-child{border-bottom: none}
+  .invite-suggest-item:hover, .invite-suggest-item.active{
+    background: var(--surface-2);
+  }
+  .invite-suggest-tag{
+    background: var(--red); color: #14110a; font-weight: 800;
+    padding: 1px 6px; font-size: 9px; letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  .invite-suggest-empty{
+    padding: 10px 12px;
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10.5px; letter-spacing: 0.18em;
+    color: var(--ink-dimmer);
+    text-transform: uppercase;
+  }
+
   /* Match roster: shows both players' usernames, team colors, and tags. */
   .match-roster{
     display:none; flex-direction:column; gap: 4px;
@@ -1736,7 +1775,10 @@
     </div>
     <div id="mp-invite-panel" hidden>
       <label style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-dimmer)">Username</label>
-      <input type="text" id="mp-invite-user" placeholder="search player" style="width:100%;background:var(--bg);border:1px solid var(--line-2);color:var(--ink);padding:10px 12px;font-family:'Saira',sans-serif;font-size:13px;outline:none;margin: 4px 0 10px" />
+      <input type="text" id="mp-invite-user" placeholder="start typing a player name…" autocomplete="off" style="width:100%;background:var(--bg);border:1px solid var(--line-2);color:var(--ink);padding:10px 12px;font-family:'Saira',sans-serif;font-size:13px;outline:none;margin: 4px 0 4px" />
+      <div class="invite-suggest">
+        <div class="invite-suggest-list" id="mp-invite-list"></div>
+      </div>
       <button class="primary-btn" id="mp-invite-send" type="button">Send Invite</button>
       <div class="auth-error" id="mp-invite-msg" style="margin-top:10px"></div>
     </div>
@@ -1870,6 +1912,16 @@
     </div>
 
     <button class="ghost-btn" id="admin-back" type="button">← Menu</button>
+  </div>
+</div>
+
+<!-- Match-end popup (shown when the server reports the match is over) -->
+<div class="full-overlay" id="match-end-overlay" role="dialog" aria-modal="true" aria-label="Match ended">
+  <div class="overlay-card">
+    <h2 class="overlay-title" id="match-end-title"><em>Match</em> Ended</h2>
+    <div class="overlay-sub" id="match-end-sub">Returning to menu…</div>
+    <div id="match-end-body" style="margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.12em;color:var(--ink-dim);line-height:1.7"></div>
+    <button class="primary-btn" id="match-end-ok" type="button" style="margin-top:16px">Continue</button>
   </div>
 </div>
 
@@ -4375,6 +4427,53 @@
   function clearMatchRoster(){
     if (matchRosterEl) matchRosterEl.classList.remove('on');
   }
+
+  // ── Match-end popup ──────────────────────────────────────────
+  const matchEndOverlay = document.getElementById('match-end-overlay');
+  const matchEndTitle   = document.getElementById('match-end-title');
+  const matchEndSub     = document.getElementById('match-end-sub');
+  const matchEndBody    = document.getElementById('match-end-body');
+  const matchEndOk      = document.getElementById('match-end-ok');
+  let matchEndTimer = null;
+  function showMatchEndPopup(msg){
+    if (!matchEndOverlay) return;
+    const keys = msg.keys | 0;
+    const quitter = msg.quitter || 'Opponent';
+    let title, sub, body;
+    if (msg.reason === 'opponent-quit'){
+      title = '<em>Opponent</em> Quit';
+      sub = `${quitter} quit the match.`;
+      body = msg.noKeys
+        ? 'No keys awarded — invite match.'
+        : `+${keys} keys awarded.`;
+    } else if (msg.reason === 'quit'){
+      title = '<em>Match</em> Abandoned';
+      sub = 'You quit the match.';
+      body = msg.noKeys ? 'No keys awarded — invite match.' : '+0 keys.';
+    } else if (msg.won){
+      title = '<em>Victory</em>';
+      sub = `Final ${msg.scoreUs ?? '?'} : ${msg.scoreThem ?? '?'}`;
+      body = msg.noKeys ? 'No keys awarded — invite match.' : `+${keys} keys awarded.`;
+    } else {
+      title = '<em>Defeat</em>';
+      sub = `Final ${msg.scoreUs ?? '?'} : ${msg.scoreThem ?? '?'}`;
+      body = msg.noKeys ? 'No keys awarded — invite match.' : `+${keys} keys (loser bonus).`;
+    }
+    const a = currentAccount();
+    const total = a ? ` · Total ${a.keys}` : '';
+    matchEndTitle.innerHTML = title;
+    matchEndSub.textContent = sub;
+    matchEndBody.textContent = body + total;
+    matchEndOverlay.classList.add('on');
+    if (matchEndTimer){ clearTimeout(matchEndTimer); matchEndTimer = null; }
+    matchEndTimer = setTimeout(dismissMatchEndPopup, 6000);
+  }
+  function dismissMatchEndPopup(){
+    if (matchEndTimer){ clearTimeout(matchEndTimer); matchEndTimer = null; }
+    if (matchEndOverlay) matchEndOverlay.classList.remove('on');
+    showMainMenu();
+  }
+  if (matchEndOk) matchEndOk.addEventListener('click', dismissMatchEndPopup);
   function buildHelloPayload(){
     const a = currentAccount();
     return {
@@ -4538,7 +4637,7 @@
         break;
       }
       case 'match-end': {
-        // Server already knows the result and the keys awarded
+        // Server already knows the result and the keys awarded.
         const a = currentAccount();
         if (a){
           a.keys += msg.keys | 0;
@@ -4558,10 +4657,7 @@
         if (resetBtn) resetBtn.style.display = '';
         if (quitBtn) quitBtn.style.display = 'none';
         clearMatchRoster();
-        hint.textContent = msg.won
-          ? `Match won · +${msg.keys | 0} 🔑  (Total ${a ? a.keys : '?'})`
-          : `Match lost · +${msg.keys | 0} 🔑  (Total ${a ? a.keys : '?'})`;
-        setTimeout(() => showMainMenu(), 1800);
+        showMatchEndPopup(msg);
         break;
       }
       case 'opponent-left': {
@@ -4614,14 +4710,102 @@
     mpStart.style.display = '';
     mpCancel.style.display = 'none';
   });
-  mpInviteSend.addEventListener('click', async () => {
-    const u = (mpInviteUser.value || '').trim();
+  async function sendInviteTo(name){
+    const u = (name || '').trim();
     if (!u){ mpInviteMsg.textContent = 'Enter a username.'; return; }
-    if (u === currentUser){ mpInviteMsg.textContent = `Can't invite yourself.`; return; }
+    if (u.toLowerCase() === (currentUser || '').toLowerCase()){
+      mpInviteMsg.textContent = `Can't invite yourself.`; return;
+    }
     await ensureMpChannel();
     if (!wsReady){ mpInviteMsg.textContent = 'Server unreachable.'; return; }
     wsSend({ type: 'invite', to: u });
     mpInviteMsg.textContent = `Invite sent to "${u}". They'll see a notification if they're online.`;
+    hideInviteSuggestions();
+  }
+  mpInviteSend.addEventListener('click', () => sendInviteTo(mpInviteUser.value));
+
+  // ── Invite autocomplete ──────────────────────────────────────
+  const mpInviteList = document.getElementById('mp-invite-list');
+  let inviteSearchTimer = null;
+  let inviteSearchSeq = 0;       // monotonic — stale responses are discarded
+  function hideInviteSuggestions(){
+    if (mpInviteList){
+      mpInviteList.classList.remove('on');
+      mpInviteList.innerHTML = '';
+    }
+  }
+  function renderInviteSuggestions(rows){
+    if (!mpInviteList) return;
+    mpInviteList.innerHTML = '';
+    if (!rows || rows.length === 0){
+      const empty = document.createElement('div');
+      empty.className = 'invite-suggest-empty';
+      empty.textContent = 'No matching players';
+      mpInviteList.appendChild(empty);
+      mpInviteList.classList.add('on');
+      return;
+    }
+    for (const row of rows){
+      const item = document.createElement('div');
+      item.className = 'invite-suggest-item';
+      const name = document.createElement('span');
+      name.textContent = row.username;
+      name.style.flex = '1';
+      item.appendChild(name);
+      const tagText = row.tag || (row.is_admin ? 'ADMIN' : '');
+      if (tagText){
+        const tag = document.createElement('span');
+        tag.className = 'invite-suggest-tag';
+        tag.textContent = tagText;
+        item.appendChild(tag);
+      }
+      item.addEventListener('click', () => {
+        mpInviteUser.value = row.username;
+        sendInviteTo(row.username);
+      });
+      mpInviteList.appendChild(item);
+    }
+    mpInviteList.classList.add('on');
+  }
+  async function runInviteSearch(query){
+    const mySeq = ++inviteSearchSeq;
+    try {
+      const { data, error } = await sb.rpc('search_usernames', { p_query: query, p_limit: 10 });
+      if (mySeq !== inviteSearchSeq) return; // newer query in flight
+      if (error){ console.warn('search_usernames failed:', error.message); return; }
+      renderInviteSuggestions(data || []);
+    } catch (e){
+      if (mySeq !== inviteSearchSeq) return;
+      console.warn('search_usernames crashed:', e);
+    }
+  }
+  if (mpInviteUser){
+    mpInviteUser.addEventListener('input', () => {
+      const q = mpInviteUser.value.trim();
+      if (inviteSearchTimer){ clearTimeout(inviteSearchTimer); inviteSearchTimer = null; }
+      if (q.length === 0){ hideInviteSuggestions(); return; }
+      // Debounce so we don't fire a request on every keystroke.
+      inviteSearchTimer = setTimeout(() => runInviteSearch(q), 150);
+    });
+    mpInviteUser.addEventListener('focus', () => {
+      const q = mpInviteUser.value.trim();
+      if (q.length > 0) runInviteSearch(q);
+    });
+    mpInviteUser.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter'){
+        e.preventDefault();
+        sendInviteTo(mpInviteUser.value);
+      } else if (e.key === 'Escape'){
+        hideInviteSuggestions();
+      }
+    });
+  }
+  // Click outside the suggestions list closes it.
+  document.addEventListener('click', (e) => {
+    if (!mpInviteList || !mpInviteUser) return;
+    if (e.target === mpInviteUser) return;
+    if (mpInviteList.contains(e.target)) return;
+    hideInviteSuggestions();
   });
   document.getElementById('mp-back').addEventListener('click', () => {
     if (mpInQueue){
