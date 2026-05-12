@@ -5,6 +5,9 @@ All notable changes to Red Key. Most recent first.
 ## 2026-05-12
 
 ### Added
+- Rarer players are now actually rarer in their stats. Each rarity has a fixed stat band: common 0-1, uncommon 0-2, rare 1-3, epic 2-4, legendary 3-5. A common can have one star in every stat, but never two in any one stat.
+- Weapons only drop on epic and legendary pulls now, at a 25% chance. Lower rarities never roll weapons.
+- Players who have a weapon are visually highlighted on the roster with a gold border and a gold "WEAPON" callout listing what they hold.
 - Roster has sort buttons: "Best → Worst" and "Worst → Best" by rarity. Click again to clear and return to the default order.
 - You can sell players from your roster for 50 keys each. Tap a player to select them, then tap the red Sell button. Confirms before selling. Equipped players are automatically unequipped first.
 - Multi-select on the roster: tap as many players as you want and sell them all at once. The Sell button updates with the count and total payout.

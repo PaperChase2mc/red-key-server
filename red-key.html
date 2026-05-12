@@ -1137,6 +1137,28 @@
     padding: 2px 5px;border:1px solid var(--line-2);
     color: var(--ink-dim);text-transform: uppercase;
   }
+  /* Highlighted treatment for players who actually have a weapon. */
+  .player-tile.has-weapon{
+    border-color: var(--yellow);
+    box-shadow: 0 0 14px rgba(251,191,36,0.25);
+  }
+  .player-tile.has-weapon .pweap{
+    margin-top: 10px;
+    padding: 6px 8px;
+    border: 1px solid var(--yellow);
+    background: rgba(251,191,36,0.08);
+    font-size: 10px;
+  }
+  .player-tile.has-weapon .pweap::before{
+    content: "WEAPON";
+    font-weight: 800; letter-spacing: 0.22em;
+    color: var(--yellow); margin-right: 8px;
+  }
+  .player-tile.has-weapon .pweap span{
+    background: var(--yellow); color: #14110a;
+    border-color: var(--yellow);
+    font-weight: 800; letter-spacing: 0.18em;
+  }
   .player-tile.equipped::after{
     content: attr(data-equipped-slot);
     position:absolute;bottom:8px;right:12px;
@@ -2158,48 +2180,56 @@
   }
 
   // ── Player generation ────────────────────────────────
-  // Star roll: 0 most common, 5 ≈ 1%. Sums to 100.
-  function rollStar(){
+  // Rarities are picked first by weighted roll, then each stat is rolled
+  // within that rarity's [min, max] band. The cap is "one above the rarity's
+  // average threshold" and the floor is "one below" — so common can have at
+  // most 1 in any stat, legendary at least 3, etc.
+  const RARITY_STAT_RANGE = {
+    common:    { min: 0, max: 1 },
+    uncommon:  { min: 0, max: 2 },
+    rare:      { min: 1, max: 3 },
+    epic:      { min: 2, max: 4 },
+    legendary: { min: 3, max: 5 }
+  };
+  function pickRarity(){
     const r = Math.random() * 100;
-    if (r < 1)   return 5;   // 1%
-    if (r < 5)   return 4;   // 4%
-    if (r < 15)  return 3;   // 10%
-    if (r < 35)  return 2;   // 20%
-    if (r < 65)  return 1;   // 30%
-    return 0;                // 35%
+    if (r < 2)  return 'legendary';   // 2%
+    if (r < 7)  return 'epic';        // 5%
+    if (r < 20) return 'rare';        // 13%
+    if (r < 50) return 'uncommon';    // 30%
+    return 'common';                  // 50%
   }
-  function rarityFromAvg(avg){
-    if (avg >= 4) return 'legendary';
-    if (avg >= 3) return 'epic';
-    if (avg >= 2) return 'rare';
-    if (avg >= 1) return 'uncommon';
-    return 'common';
+  function rollStatIn(min, max){
+    return min + Math.floor(Math.random() * (max - min + 1));
   }
-  function rollWeapons(){
+  function rollWeapons(rarity){
+    // Weapons drop only from epic and legendary pulls (25%).
+    if (rarity !== 'epic' && rarity !== 'legendary') return [null, null];
     const ids = Object.keys(db.abilities);
     if (ids.length === 0) return [null, null];
     if (Math.random() >= 0.25) return [null, null];
     const first = ids[Math.floor(Math.random()*ids.length)];
     let second = null;
     if (Math.random() < 0.5){
-      // Pick a different one if possible
       const others = ids.filter(i => i !== first);
       second = others.length ? others[Math.floor(Math.random()*others.length)] : null;
     }
     return [first, second];
   }
   function generatePlayer(){
-    const speed    = rollStar();
-    const shooting = rollStar();
-    const stamina  = rollStar();
-    const avg = (speed + shooting + stamina) / 3;
+    const rarity = pickRarity();
+    const range = RARITY_STAT_RANGE[rarity];
     return {
       id: uid('pl'),
       name: randomName(),
       num: Math.floor(Math.random()*99) + 1,
-      stats: { speed, shooting, stamina },
-      rarity: rarityFromAvg(avg),
-      weapons: rollWeapons()
+      stats: {
+        speed:    rollStatIn(range.min, range.max),
+        shooting: rollStatIn(range.min, range.max),
+        stamina:  rollStatIn(range.min, range.max)
+      },
+      rarity,
+      weapons: rollWeapons(rarity)
     };
   }
 
@@ -4069,7 +4099,11 @@
       if (a.equipped.forward === p.id) equippedSlot = 'F';
       else if (a.equipped.leftWing === p.id) equippedSlot = 'LW';
       else if (a.equipped.rightWing === p.id) equippedSlot = 'RW';
-      tile.className = 'player-tile' + (selectedRosterIds.has(p.id) ? ' selected' : '') + (equippedSlot ? ' equipped' : '');
+      const hasWeapon = !!(p.weapons && (p.weapons[0] || p.weapons[1]));
+      tile.className = 'player-tile'
+        + (selectedRosterIds.has(p.id) ? ' selected' : '')
+        + (equippedSlot ? ' equipped' : '')
+        + (hasWeapon ? ' has-weapon' : '');
       if (equippedSlot) tile.dataset.equippedSlot = equippedSlot;
       tile.innerHTML = renderPlayerTileHTML(p);
       tile.addEventListener('click', () => {
