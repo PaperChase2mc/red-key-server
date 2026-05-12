@@ -3054,6 +3054,9 @@
 
   svg.addEventListener('pointerdown', (e) => {
     if (animating) return;
+    // Once locked in for an MP turn, the planning phase is over for you —
+    // no more dragging players or the ball until the server sends turn-end.
+    if (mpMatchStarted && mpMyAimsLocked) return;
     const p = svgPoint(e);
     const r = whichToGrab(p);
     if (!r) return;
@@ -3123,6 +3126,8 @@
 
   segBtns.forEach(btn => btn.addEventListener('click', () => {
     if (animating || !hasBall()) return;
+    // Locked-in players don't get to change kick/dribble either.
+    if (mpMatchStarted && mpMyAimsLocked) return;
     mode = btn.dataset.mode;
     refreshArrows();
     refreshModeUI();
@@ -5340,6 +5345,13 @@
   // Shared with the match-start message handler. The server sends match-start
   // with full roster + state and this function consumes it.
   function applyMatchStart(msg){
+    // Detect resume: we were already in this match (mpMatchStarted=true) AND
+    // the server is reporting the same turn number we were on. In that case
+    // we should NOT wipe locally-drawn aims — the player may have been
+    // mid-planning when the WS bounced.
+    const incomingTurn = msg.turn || 1;
+    const isResumeSameTurn = mpMatchStarted && (turn === incomingTurn) && !msg.animating;
+
     mpMatchStarted = true;
     mpModeActive = true;
     mpScoreTarget = msg.target || 3;
@@ -5365,11 +5377,14 @@
     scoreThem = stateScores ? (stateScores[1] | 0) : 0;
     scoreUsEl.textContent   = String(scoreUs);
     scoreThemEl.textContent = String(scoreThem);
-    turn = msg.turn || 1;
+    turn = incomingTurn;
     turnEl.textContent = String(turn).padStart(2, '0');
-    playerAims = freshAims();
-    ballAim = null;
-    frozen = freshFrozen();
+    if (!isResumeSameTurn){
+      // Fresh match OR resume into a different turn: drop locally-drawn aims.
+      playerAims = freshAims();
+      ballAim = null;
+      frozen = freshFrozen();
+    }
     // Reset transient mid-turn flags. On a fresh match these are no-ops; on a
     // RESUME (server transferred this match to us after a tab/network hop) the
     // server tells us the real state via msg.animating / msg.iLocked.

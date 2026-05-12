@@ -4,6 +4,12 @@ All notable changes to Red Key. Most recent first.
 
 ## 2026-05-12
 
+### Changed
+- Once you lock in for a turn, you can no longer drag players, drag the ball, or change Kick/Dribble mode until the next turn starts. The plan is committed.
+
+### Fixed
+- Arrows you drew during planning no longer vanish if the connection briefly drops and reconnects. Resuming into the same turn now keeps your in-progress aims intact.
+
 ### Added
 - Skill Builder editor expanded: each ability can now be marked On-Ball or Off-Ball, given a cooldown in turns, and configured with zones, requirements, and rewards. The list view shows a quick summary of each ability's setup. (These settings save to the database but don't yet affect gameplay — Phase 3 wires them into the simulation.)
 - Zones live in a list on the ability. Each zone has a label, fixed-offset coordinates or a "Player Places" mode, a radius, a color picker, and a target type (teammate, enemy, ball, enemy with ball, or self).
