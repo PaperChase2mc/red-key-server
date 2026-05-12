@@ -4241,6 +4241,8 @@
         playerAims = freshAims();
         ballAim = null;
         animating = false;
+        mpMyAimsLocked = null;
+        mpOpponentAimsLocked = null;
         refreshArrows();
         refreshModeUI();
         refreshPossessionUI();
@@ -4255,6 +4257,8 @@
         playerAims = freshAims();
         ballAim = null;
         animating = false;
+        mpMyAimsLocked = null;
+        mpOpponentAimsLocked = null;
         bounceRow.style.display = 'none';
         clearAllArrows();
         refreshArrows();
