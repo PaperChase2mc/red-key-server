@@ -1830,6 +1830,9 @@
   </div>
 </div>
 
+<!-- Supabase JS SDK — backs account auth + persistence -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script>
 (function(){
   // The server URL is derived from wherever the page was loaded from. If you
@@ -1851,33 +1854,74 @@
 
   // ════════════════════════════════════════════════════════
   //  Accounts · Players · Abilities · Store · Admin
-  //  All client-side via localStorage. Auth here is local-only;
-  //  this is a demo not a secure backend.
+  //  Backed by Supabase: accounts persist across browsers + devices.
+  //  Auth is Supabase Auth (username → synthetic email + password).
   // ════════════════════════════════════════════════════════
-  const STORAGE_KEY = 'redkey:v1';
-  function loadDB(){
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return { accounts: {}, abilities: {} };
-      const db = JSON.parse(raw);
-      if (!db.accounts) db.accounts = {};
-      if (!db.abilities) db.abilities = {};
-      return db;
-    } catch(_){ return { accounts: {}, abilities: {} }; }
-  }
-  function saveDB(){
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch(_){}
-  }
-  function hashPw(s){
-    // Tiny, non-cryptographic hash. Just so passwords aren't stored in plain text.
-    let h = 5381;
-    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-    return 'h_' + (h >>> 0).toString(36);
-  }
+  const SUPABASE_URL  = 'https://jsfzyvubnkvqvvzspcxj.supabase.co';
+  const SUPABASE_KEY  = 'sb_publishable_2vFl00b7G1brWW50vEsj7Q_mftauVzU';
+  const SYNTH_EMAIL_DOMAIN = 'redkey.invalid';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'redkey-supabase-auth' }
+  });
+  function emailFor(username){ return (username || '').toLowerCase() + '@' + SYNTH_EMAIL_DOMAIN; }
+
   function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3); }
 
-  const db = loadDB();
+  // The local "db" is now just an in-memory cache of the logged-in user's
+  // profile so the rest of the codebase (which reads db.accounts[currentUser]
+  // synchronously all over the place) keeps working. Writes via saveDB are
+  // debounced upserts back to Supabase.
+  const db = { accounts: {}, abilities: {} };
   let currentUser = null;             // username string while logged in
+
+  let saveDBTimer = null;
+  function saveDB(){
+    if (!currentUser) return;
+    const acct = db.accounts[currentUser];
+    if (!acct || !acct.__authUserId) return;
+    if (saveDBTimer) clearTimeout(saveDBTimer);
+    saveDBTimer = setTimeout(async () => {
+      saveDBTimer = null;
+      try {
+        const { error } = await sb.from('profiles').update({
+          keys: acct.keys | 0,
+          players: acct.players || [],
+          equipped: acct.equipped || { forward: null, leftWing: null, rightWing: null },
+          is_admin: !!acct.isAdmin
+        }).eq('id', acct.__authUserId);
+        if (error) console.warn('profile save failed:', error.message);
+      } catch (e){ console.warn('profile save crashed:', e); }
+    }, 400);
+  }
+  // Flush on tab close so the last action (key spend, pack open) isn't lost.
+  window.addEventListener('beforeunload', () => {
+    if (!saveDBTimer || !currentUser) return;
+    clearTimeout(saveDBTimer); saveDBTimer = null;
+    const acct = db.accounts[currentUser];
+    if (!acct || !acct.__authUserId) return;
+    try {
+      const body = JSON.stringify({
+        keys: acct.keys | 0,
+        players: acct.players || [],
+        equipped: acct.equipped || {},
+        is_admin: !!acct.isAdmin
+      });
+      const url = SUPABASE_URL + '/rest/v1/profiles?id=eq.' + acct.__authUserId;
+      navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+    } catch(_){}
+  });
+
+  function profileToAcct(profile, authUserId){
+    return {
+      __authUserId: authUserId,
+      username: profile.username,
+      isAdmin: !!profile.is_admin,
+      keys: profile.keys | 0,
+      players: profile.players || [],
+      equipped: profile.equipped || { forward: null, leftWing: null, rightWing: null },
+      createdAt: profile.created_at ? new Date(profile.created_at).getTime() : Date.now()
+    };
+  }
 
   // ── Random player name generator ─────────────────────
   const FIRST_NAMES = [
@@ -1942,34 +1986,57 @@
     };
   }
 
-  // ── Account helpers ──────────────────────────────────
-  function isFirstAccount(){ return Object.keys(db.accounts).length === 0; }
-  function createAccount(username, password){
-    const acct = {
-      username,
-      pw: hashPw(password),
-      isAdmin: isFirstAccount(),  // first ever account becomes admin
-      keys: 0,
-      players: [],
-      equipped: { forward: null, leftWing: null, rightWing: null },
-      createdAt: Date.now()
-    };
-    db.accounts[username] = acct;
-    // Starter bundle: 300 keys + 3 single-player packs already opened
+  // ── Account helpers (Supabase-backed) ──────────────────
+  async function createAccount(username, password){
+    const email = emailFor(username);
+    const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email, password });
+    if (signUpErr){
+      const msg = signUpErr.message || 'Sign-up failed.';
+      if (/already.*registered/i.test(msg)) throw new Error('Username already taken.');
+      throw new Error(msg);
+    }
+    if (!signUpData || !signUpData.user) throw new Error('Sign-up failed (no user).');
+    const userId = signUpData.user.id;
+    // Starter bundle: 3 random players, auto-equipped.
     const starters = [generatePlayer(), generatePlayer(), generatePlayer()];
-    acct.players.push(...starters);
-    // Auto-equip the first three players if user has them
-    acct.equipped.forward    = starters[0].id;
-    acct.equipped.leftWing   = starters[1].id;
-    acct.equipped.rightWing  = starters[2].id;
-    acct.keys = 0;
-    saveDB();
+    const equipped = {
+      forward: starters[0].id,
+      leftWing: starters[1].id,
+      rightWing: starters[2].id
+    };
+    const { data: profile, error: insertErr } = await sb
+      .from('profiles')
+      .insert({ id: userId, username, keys: 0, players: starters, equipped, is_admin: false })
+      .select()
+      .single();
+    if (insertErr){
+      // Username collision: profile insert fails due to UNIQUE(username) even
+      // though signUp succeeded (it keyed on a synthetic email). Surface a
+      // friendly error and let the user pick a different name.
+      if (/duplicate|unique/i.test(insertErr.message || '')) throw new Error('Username already taken.');
+      throw new Error(insertErr.message || 'Profile creation failed.');
+    }
+    const acct = profileToAcct(profile, userId);
+    db.accounts[acct.username] = acct;
     return acct;
   }
-  function authLogin(username, password){
-    const acct = db.accounts[username];
-    if (!acct) return { ok:false, error:'No account with that username.' };
-    if (acct.pw !== hashPw(password)) return { ok:false, error:'Wrong password.' };
+  async function authLogin(username, password){
+    const email = emailFor(username);
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error){
+      const msg = error.message || '';
+      if (/invalid login credentials/i.test(msg)) return { ok:false, error:'Wrong username or password.' };
+      return { ok:false, error: msg || 'Login failed.' };
+    }
+    if (!data || !data.user) return { ok:false, error:'Login failed (no user).' };
+    const { data: profile, error: profErr } = await sb
+      .from('profiles')
+      .select('*')
+      .eq('id', data.user.id)
+      .single();
+    if (profErr || !profile) return { ok:false, error:'No profile linked to this account.' };
+    const acct = profileToAcct(profile, data.user.id);
+    db.accounts[acct.username] = acct;
     return { ok:true, account: acct };
   }
   function setSession(username, remember){
@@ -3633,26 +3700,36 @@
     const b = e.target.closest('button[data-auth-tab]');
     if (b) showAuth(b.dataset.authTab);
   });
-  authForm.addEventListener('submit', (e) => {
+  authForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const u = (authUser.value || '').trim();
     const p = authPass.value || '';
     if (u.length < 3){ authError.textContent = 'Username must be 3+ characters.'; return; }
     if (p.length < 4){ authError.textContent = 'Password must be 4+ characters.'; return; }
-    if (authMode === 'register'){
-      if (db.accounts[u]){ authError.textContent = 'Username already taken.'; return; }
-      createAccount(u, p);
+    // Supabase requires 6+ char passwords by default.
+    if (p.length < 6 && authMode === 'register'){
+      authError.textContent = 'Password must be 6+ characters.'; return;
     }
-    const res = authLogin(u, p);
-    if (!res.ok){ authError.textContent = res.error; return; }
+    authError.textContent = authMode === 'register' ? 'Creating account…' : 'Logging in…';
+    try {
+      if (authMode === 'register'){
+        await createAccount(u, p);
+        // createAccount also creates the auth session, so we're already signed
+        // in. Pull the profile we cached into `db.accounts[u]`.
+      } else {
+        const res = await authLogin(u, p);
+        if (!res.ok){ authError.textContent = res.error; return; }
+      }
+    } catch (err){
+      authError.textContent = (err && err.message) || 'Auth failed.';
+      return;
+    }
+    authError.textContent = '';
     setSession(u, authRemember.checked);
     authPass.value = '';
     hideAuth();
     refreshAccountBars();
     showMainMenu();
-    // After logging in, check if this account is in a match in another tab
-    const otherTabMatch = detectActiveMatchInOtherTab();
-    if (otherTabMatch) showBlockOverlay(otherTabMatch);
     // Connect to the game server and announce who we are.
     (async () => {
       await ensureMpChannel();
@@ -3673,6 +3750,10 @@
     menuAdminBtn.style.display = a.isAdmin ? '' : 'none';
   }
   function logout(){
+    // Flush any pending profile save, sign out of Supabase, then drop the cache.
+    if (saveDBTimer){ clearTimeout(saveDBTimer); saveDBTimer = null; }
+    try { sb.auth.signOut(); } catch(_){}
+    if (currentUser){ delete db.accounts[currentUser]; }
     clearSession();
     hideMainMenu();
     showAuth('login');
@@ -4755,23 +4836,12 @@
     rebuildAbilityList();
   });
   document.getElementById('gift-send').addEventListener('click', () => {
-    const u = document.getElementById('gift-user').value.trim();
-    const amt = parseInt(document.getElementById('gift-amount').value || '0', 10);
     const msg = document.getElementById('gift-msg');
-    if (!db.accounts[u]){ msg.textContent = `No such user "${u}".`; return; }
-    if (!Number.isFinite(amt) || amt <= 0){ msg.textContent = 'Enter a positive amount.'; return; }
-    db.accounts[u].keys += amt;
-    saveDB();
-    msg.textContent = `Sent ${amt} 🔑 to ${u}.`;
-    refreshAccountBars();
+    msg.textContent = 'Gifting other users requires a server-side admin function (not yet wired up in Supabase mode).';
   });
   document.getElementById('promote-btn').addEventListener('click', () => {
-    const u = document.getElementById('promote-user').value.trim();
     const msg = document.getElementById('promote-msg');
-    if (!db.accounts[u]){ msg.textContent = `No such user "${u}".`; return; }
-    db.accounts[u].isAdmin = true;
-    saveDB();
-    msg.textContent = `${u} is now an admin.`;
+    msg.textContent = 'Promoting other users requires a server-side admin function (not yet wired up in Supabase mode).';
   });
   document.getElementById('admin-back').addEventListener('click', () => {
     adminOverlay.classList.remove('on');
@@ -4981,20 +5051,46 @@
   refreshRosterUI();
   updateKeyBindLabels();
 
-  const remembered = getRememberedUser();
-  if (remembered && db.accounts[remembered]){
-    currentUser = remembered;
-    refreshAccountBars();
-    applyEquippedToPlayers();
-    refreshRosterUI();
-    refreshPossessionUI();
-    // If this user is in a match in another tab, block this one.
-    const otherTabMatch = detectActiveMatchInOtherTab();
-    if (otherTabMatch) showBlockOverlay(otherTabMatch);
-  } else {
-    hideMainMenu();
-    showAuth(isFirstAccount() ? 'register' : 'login');
-  }
+  // Auto-login: ask Supabase if we have a live session, fetch the profile,
+  // and seed the in-memory cache. Hide both menu + auth while we check so
+  // there's no login-form flash for users who are already signed in.
+  hideMainMenu();
+  (async () => {
+    try {
+      const { data: sess } = await sb.auth.getSession();
+      const session = sess && sess.session;
+      if (!session || !session.user){
+        showAuth('login');
+        return;
+      }
+      const { data: profile, error } = await sb
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+      if (error || !profile){
+        showAuth('login');
+        return;
+      }
+      const acct = profileToAcct(profile, session.user.id);
+      db.accounts[acct.username] = acct;
+      currentUser = acct.username;
+      hideAuth();
+      refreshAccountBars();
+      applyEquippedToPlayers();
+      refreshRosterUI();
+      refreshPossessionUI();
+      showMainMenu();
+      // Tell the game server who we are once the WS is up.
+      await ensureMpChannel();
+      if (wsReady && currentUser){
+        wsSend({ type: 'hello', username: currentUser, equipped: getMyEquippedPlayers() });
+      }
+    } catch (e){
+      console.warn('auto-login failed:', e);
+      showAuth('login');
+    }
+  })();
   // Auto-connect to the game server so presence + matchmaking are ready
   // immediately. If the server is unreachable, MP screens will surface the
   // status; the rest of the app still works offline.
