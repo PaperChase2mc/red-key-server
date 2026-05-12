@@ -4,6 +4,9 @@ All notable changes to Red Key. Most recent first.
 
 ## 2026-05-12
 
+### Added
+- Admins can toggle maintenance mode from the admin panel. When it's on, non-admins who try to log in see an offline screen with the Discord invite link, a Copy Link button, and a Go Back to Login button. Admins are unaffected.
+
 ### Changed
 - New player drop rates: Common 49.5%, Uncommon 25%, Rare 20%, Epic 5%, Legendary 0.5%. Rares are more common; Legendaries are much rarer.
 - Once you lock in for a turn, you can no longer drag players, drag the ball, or change Kick/Dribble mode until the next turn starts. The plan is committed.

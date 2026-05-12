@@ -2005,6 +2005,18 @@
     <div class="overlay-sub">Skills · keys · admin promotion</div>
 
     <div class="admin-section">
+      <h3>Maintenance Mode</h3>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--ink-dimmer);margin-bottom:8px">
+        When enabled, non-admin users can't log in. They see a "game offline" screen with the Discord link instead. Admins are unaffected.
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span id="maintenance-status" style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-dim)">Status: —</span>
+        <button class="primary-btn" id="maintenance-toggle" type="button">Toggle</button>
+        <span id="maintenance-toggle-msg" style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--ink-dimmer)"></span>
+      </div>
+    </div>
+
+    <div class="admin-section">
       <h3>Skill Builder</h3>
       <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--ink-dimmer);margin-bottom:8px">
         Design weapon abilities that can drop on Epic and Legendary players.
@@ -2074,6 +2086,29 @@
     </div>
 
     <button class="ghost-btn" id="admin-back" type="button">← Menu</button>
+  </div>
+</div>
+
+<!-- Maintenance gate (shown to non-admins when an admin flips the kill switch) -->
+<div class="full-overlay" id="maintenance-overlay" role="dialog" aria-modal="true" aria-label="Maintenance">
+  <div class="overlay-card">
+    <h2 class="overlay-title"><em>Game</em> Offline</h2>
+    <div class="overlay-sub">Temporarily down for maintenance</div>
+    <div style="margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.10em;color:var(--ink-dim);line-height:1.7">
+      The game is currently experiencing issues and is unavailable to play right now.
+      Hang tight while the team gets it back online.
+    </div>
+    <div style="margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;color:var(--ink-dimmer);text-transform:uppercase">
+      Join the Discord for updates:
+    </div>
+    <div style="margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink);word-break:break-all">
+      https://discord.gg/zdunS4THjZ
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px">
+      <button class="primary-btn" id="maintenance-copy" type="button">Copy Link</button>
+      <button class="ghost-btn"   id="maintenance-back" type="button">Go Back to Login</button>
+      <span id="maintenance-copy-status" style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--ink-dim)"></span>
+    </div>
   </div>
 </div>
 
@@ -2282,6 +2317,70 @@
       navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
     } catch(_){}
   });
+
+  // ── Maintenance gate ─────────────────────────────────
+  const DISCORD_INVITE = 'https://discord.gg/zdunS4THjZ';
+  const maintenanceOverlay = document.getElementById('maintenance-overlay');
+  async function fetchMaintenanceMode(){
+    try {
+      const { data, error } = await sb.from('game_settings').select('maintenance_mode').eq('id', 1).single();
+      if (error){ console.warn('fetchMaintenanceMode failed:', error.message); return false; }
+      return !!(data && data.maintenance_mode);
+    } catch (e){
+      console.warn('fetchMaintenanceMode crashed:', e);
+      return false;
+    }
+  }
+  function showMaintenanceScreen(){
+    if (!maintenanceOverlay) return;
+    hideMainMenu();
+    hideAuth();
+    maintenanceOverlay.classList.add('on');
+  }
+  function hideMaintenanceScreen(){
+    if (maintenanceOverlay) maintenanceOverlay.classList.remove('on');
+  }
+  // After auth completes, this enforces the gate: non-admins get bounced
+  // when maintenance is on. Returns true if the user was blocked.
+  async function enforceMaintenanceGate(){
+    const acct = currentAccount();
+    if (acct && acct.isAdmin) return false; // admins bypass
+    const on = await fetchMaintenanceMode();
+    if (!on) return false;
+    // Block: sign out and show the maintenance screen.
+    try { sb.auth.signOut(); } catch(_){}
+    if (currentUser){ delete db.accounts[currentUser]; }
+    currentUser = null;
+    try { localStorage.removeItem('redkey:session'); } catch(_){}
+    showMaintenanceScreen();
+    return true;
+  }
+  const maintCopyBtn = document.getElementById('maintenance-copy');
+  if (maintCopyBtn){
+    maintCopyBtn.addEventListener('click', async () => {
+      const status = document.getElementById('maintenance-copy-status');
+      try {
+        await navigator.clipboard.writeText(DISCORD_INVITE);
+        if (status) status.textContent = 'Copied.';
+      } catch (_){
+        // Fallback for browsers that don't expose Clipboard API.
+        const ta = document.createElement('textarea');
+        ta.value = DISCORD_INVITE;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); if (status) status.textContent = 'Copied.'; }
+        catch (_){ if (status) status.textContent = 'Copy failed — select the link and copy manually.'; }
+        document.body.removeChild(ta);
+      }
+    });
+  }
+  const maintBackBtn = document.getElementById('maintenance-back');
+  if (maintBackBtn){
+    maintBackBtn.addEventListener('click', () => {
+      hideMaintenanceScreen();
+      showAuth('login');
+    });
+  }
 
   async function loadAbilities(){
     // Pull every ability from Supabase into the in-memory `db.abilities` map
@@ -4146,6 +4245,8 @@
     authError.textContent = '';
     setSession(u, authRemember.checked);
     authPass.value = '';
+    // Maintenance gate: bounces non-admins to the offline screen.
+    if (await enforceMaintenanceGate()){ return; }
     hideAuth();
     refreshAccountBars();
     showMainMenu();
@@ -6082,8 +6183,38 @@
     if (!a || !a.isAdmin) return;
     refreshAdminServerUI();
     refreshMyTagControls();
+    refreshMaintenanceStatus();
     hideMainMenu();
     adminOverlay.classList.add('on');
+  }
+
+  // ── Maintenance toggle (admin-only) ──────────────────
+  const maintStatusEl  = document.getElementById('maintenance-status');
+  const maintToggleBtn = document.getElementById('maintenance-toggle');
+  const maintToggleMsg = document.getElementById('maintenance-toggle-msg');
+  let maintenanceModeCache = false;
+  async function refreshMaintenanceStatus(){
+    if (!maintStatusEl || !maintToggleBtn) return;
+    maintStatusEl.textContent = 'Status: …';
+    maintenanceModeCache = await fetchMaintenanceMode();
+    maintStatusEl.textContent = 'Status: ' + (maintenanceModeCache ? 'ON (non-admins blocked)' : 'OFF (everyone can play)');
+    maintToggleBtn.textContent = maintenanceModeCache ? 'Disable Maintenance' : 'Enable Maintenance';
+    maintToggleBtn.classList.toggle('btn-quit', maintenanceModeCache);
+  }
+  if (maintToggleBtn){
+    maintToggleBtn.addEventListener('click', async () => {
+      const newVal = !maintenanceModeCache;
+      maintToggleMsg.textContent = 'Saving…';
+      try {
+        const { error } = await sb.from('game_settings').update({
+          maintenance_mode: newVal,
+          updated_at: new Date().toISOString()
+        }).eq('id', 1);
+        if (error){ maintToggleMsg.textContent = error.message || 'Failed to update.'; return; }
+        maintToggleMsg.textContent = newVal ? 'Maintenance ON.' : 'Maintenance OFF.';
+        await refreshMaintenanceStatus();
+      } catch (e){ maintToggleMsg.textContent = (e && e.message) || 'Update crashed.'; }
+    });
   }
 
   // Admin-only: server URL override
@@ -6305,6 +6436,8 @@
       const acct = profileToAcct(profile, session.user.id);
       db.accounts[acct.username] = acct;
       currentUser = acct.username;
+      // Maintenance gate: same as manual login.
+      if (await enforceMaintenanceGate()){ return; }
       hideAuth();
       refreshAccountBars();
       applyEquippedToPlayers();
