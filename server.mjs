@@ -166,6 +166,16 @@ function createMatch(wsA, wsB, opts){
 function buildMatchStart(match, role){
   const me  = role === 'us' ? match.playerA : match.playerB;
   const opp = role === 'us' ? match.playerB : match.playerA;
+  // If there's an active clash on the server, tell the resuming client about
+  // it so they can rebuild the QTE overlay instead of being stuck on the
+  // field while the opponent waits.
+  let clashInfo = null;
+  if (match.clash){
+    clashInfo = {
+      ctx: match.clash.ctx,
+      resolved: match.clash.resolved || null
+    };
+  }
   return {
     type: 'match-start',
     matchId: match.id,
@@ -185,7 +195,8 @@ function buildMatchStart(match, role){
     // Resume aids.
     animating: !!match.animating,
     iLocked: role === 'us' ? !!match.aimsA : !!match.aimsB,
-    oppLocked: role === 'us' ? !!match.aimsB : !!match.aimsA
+    oppLocked: role === 'us' ? !!match.aimsB : !!match.aimsA,
+    clash: clashInfo
   };
 }
 function serializeAllPlayers(match){

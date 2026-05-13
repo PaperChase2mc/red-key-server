@@ -5235,7 +5235,15 @@
       }
       case 'clash-start': {
         if (!mpMatchStarted || !msg.ctx) break;
-        if (clash) break;
+        // Defensive: a leftover `clash` from a previous round (e.g. a dropped
+        // clash-dismiss, or a WS hiccup) used to make us silently skip this.
+        // Now we always tear down stale state before starting fresh.
+        if (clash){
+          if (clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
+          if (clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
+          if (clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
+          clash = null;
+        }
         startClash(msg.ctx);
         break;
       }
@@ -5633,15 +5641,33 @@
     animating = !!msg.animating;
     mpMyAimsLocked = msg.iLocked ? { aims: {}, ballAim: null, mode: 'kick' } : null;
     mpOpponentAimsLocked = null;
-    // Always tear down any stale clash UI on (re)entry. If the server is in a
-    // clash, its next clash-start broadcast will rebuild it; if not, we don't
-    // want a leftover overlay trapping the user.
+    // Always tear down any stale clash UI on (re)entry.
     if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
     if (clash && clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
     if (clash && clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
     clash = null;
     if (qteOverlay) qteOverlay.classList.remove('on');
     if (msg.state) applyTurnState(msg.state);
+    // If the server is mid-clash, rebuild the clash overlay so the resuming
+    // player can participate instead of leaving the opponent waiting.
+    if (msg.clash && msg.clash.ctx){
+      startClash(msg.clash.ctx);
+      if (msg.clash.resolved){
+        // Server already computed the outcome — jump straight to the result
+        // screen. The user just taps continue.
+        clash.resolved = msg.clash.resolved;
+        const out = msg.clash.resolved;
+        const totalUs   = (typeof out.totalUs   === 'number') ? out.totalUs   : 0;
+        const totalThem = (typeof out.totalThem === 'number') ? out.totalThem : 0;
+        if (qteTotalUs)   qteTotalUs.textContent   = totalUs;
+        if (qteTotalThem) qteTotalThem.textContent = totalThem;
+        if (qtePrompt){
+          qtePrompt.innerHTML = `<strong>${totalUs} : ${totalThem}</strong> · #${players[out.winnerId] ? players[out.winnerId].num : '?'} wins the clash. Tap to continue.`;
+          qtePrompt.classList.add('result');
+        }
+        if (qteSub) qteSub.textContent = 'Clash resolved';
+      }
+    }
     buildRoster();
     refreshRosterUI();
     refreshPossessionUI();

@@ -18,6 +18,7 @@ All notable changes to Red Key. Most recent first.
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
 ### Fixed
+- Clashes no longer get stuck with one player on the QTE screen and the other staring at the field. If your previous clash didn't fully dismiss (dropped packet, transient hiccup), the new clash now overrides and starts cleanly. If you reconnect mid-clash, the server includes the clash info in the resume so your QTE overlay rebuilds.
 - You can no longer lock in twice on the same turn. The Lock In button now stays disabled the moment you commit, no matter what else refreshes the UI.
 - Arrows you drew during planning no longer vanish if the connection briefly drops and reconnects. Resuming into the same turn now keeps your in-progress aims intact.
 
