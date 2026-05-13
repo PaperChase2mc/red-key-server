@@ -5601,6 +5601,11 @@
     // mid-planning when the WS bounced.
     const incomingTurn = msg.turn || 1;
     const isResumeSameTurn = mpMatchStarted && (turn === incomingTurn) && !msg.animating;
+    // Preserve local UI state across a same-turn resume so the user's
+    // dribble/kick choice and lock-in don't get clobbered by the server's
+    // default state snapshot.
+    const localModeBeforeResume = mode;
+    const localAimsLocked       = mpMyAimsLocked;
 
     mpMatchStarted = true;
     mpModeActive = true;
@@ -5639,7 +5644,24 @@
     // RESUME (server transferred this match to us after a tab/network hop) the
     // server tells us the real state via msg.animating / msg.iLocked.
     animating = !!msg.animating;
-    mpMyAimsLocked = msg.iLocked ? { aims: {}, ballAim: null, mode: 'kick' } : null;
+    if (isResumeSameTurn && localAimsLocked && !msg.iLocked){
+      // Edge case: we locked in locally, but the server hasn't recorded our
+      // aims (the lock-in message was lost during the disconnect). Keep the
+      // local lock state and re-send the aims so the server can advance.
+      mpMyAimsLocked = localAimsLocked;
+      try {
+        wsSend({
+          type: 'aims',
+          aims: localAimsLocked.aims,
+          ballAim: localAimsLocked.ballAim,
+          mode: localAimsLocked.mode
+        });
+      } catch(_){}
+    } else {
+      mpMyAimsLocked = msg.iLocked
+        ? (localAimsLocked || { aims: {}, ballAim: null, mode: 'kick' })
+        : null;
+    }
     mpOpponentAimsLocked = null;
     // Always tear down any stale clash UI on (re)entry.
     if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
@@ -5648,6 +5670,10 @@
     clash = null;
     if (qteOverlay) qteOverlay.classList.remove('on');
     if (msg.state) applyTurnState(msg.state);
+    // applyTurnState overwrites `mode` from the snapshot. On a same-turn
+    // resume during planning, that would clobber the user's dribble/kick
+    // selection — so restore what they had.
+    if (isResumeSameTurn) mode = localModeBeforeResume;
     // If the server is mid-clash, rebuild the clash overlay so the resuming
     // player can participate instead of leaving the opponent waiting.
     if (msg.clash && msg.clash.ctx){

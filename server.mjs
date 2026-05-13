@@ -920,12 +920,29 @@ const httpServer = createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server: httpServer });
 wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (data) => {
     try { handleMessage(ws, JSON.parse(data.toString())); } catch(_){}
   });
   ws.on('close', () => handleDisconnect(ws));
   ws.on('error', () => {});
 });
+
+// Heartbeat: idle WebSockets get killed by upstream load balancers (Render's
+// default is ~110s with no traffic). The planning phase routinely sits idle
+// for up to 60s, which is well within "let's kill it" territory. Ping every
+// 25s; if a client misses two pongs in a row, drop them.
+setInterval(() => {
+  for (const ws of wss.clients){
+    if (ws.isAlive === false){
+      try { ws.terminate(); } catch(_){}
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch(_){}
+  }
+}, 25000);
 
 httpServer.listen(PORT, () => {
   console.log(`Red Key server ready: http://localhost:${PORT}/`);
