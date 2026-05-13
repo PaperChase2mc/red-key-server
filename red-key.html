@@ -3069,6 +3069,9 @@
   }
   function canLockIn(){
     if (animating) return false;
+    // Once you've locked in for this MP turn, you can't lock in again — the
+    // button has to stay disabled even when something else refreshes it.
+    if (mpMatchStarted && mpMyAimsLocked) return false;
     // Both teams move on the same turn, so any non-holder player with an
     // aim makes the turn lockable.
     for (const id in players){

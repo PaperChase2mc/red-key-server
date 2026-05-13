@@ -15,6 +15,7 @@ All notable changes to Red Key. Most recent first.
 - Once you lock in for a turn, you can no longer drag players, drag the ball, or change Kick/Dribble mode until the next turn starts. The plan is committed.
 
 ### Fixed
+- You can no longer lock in twice on the same turn. The Lock In button now stays disabled the moment you commit, no matter what else refreshes the UI.
 - Arrows you drew during planning no longer vanish if the connection briefly drops and reconnects. Resuming into the same turn now keeps your in-progress aims intact.
 
 ### Added
