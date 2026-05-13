@@ -4788,7 +4788,7 @@
           }
           return;
         }
-        if (settled && currentUser && !sessionReplaced) setTimeout(() => ensureMpChannel(), 5000);
+        if (settled && currentUser && !sessionReplaced) setTimeout(() => ensureMpChannel(), 1500);
       };
     });
     return wsPendingConnect;

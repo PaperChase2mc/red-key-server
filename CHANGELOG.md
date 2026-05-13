@@ -14,6 +14,9 @@ All notable changes to Red Key. Most recent first.
 - New player drop rates: Common 49.5%, Uncommon 25%, Rare 20%, Epic 5%, Legendary 0.5%. Rares are more common; Legendaries are much rarer.
 - Once you lock in for a turn, you can no longer drag players, drag the ball, or change Kick/Dribble mode until the next turn starts. The plan is committed.
 
+### Changed
+- WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
+
 ### Fixed
 - You can no longer lock in twice on the same turn. The Lock In button now stays disabled the moment you commit, no matter what else refreshes the UI.
 - Arrows you drew during planning no longer vanish if the connection briefly drops and reconnects. Resuming into the same turn now keeps your in-progress aims intact.
