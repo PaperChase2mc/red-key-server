@@ -17,6 +17,9 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Added
+- Server-side test harness (`npm test`) that spawns the game server, opens two WebSocket clients, and walks them through 17 multiplayer scenarios end-to-end. Catches regressions in the protocol before they reach a real match.
+
 ### Fixed
 - Dribble/Kick mode selection and Lock In state no longer revert on their own. The game server now keeps WebSocket connections alive with a heartbeat, so cloud load balancers stop killing idle connections during long planning phases. As a safety net, if a connection does drop, the client preserves your mode + lock state on resume and re-sends your aims if the server is missing them.
 - Clashes no longer get stuck with one player on the QTE screen and the other staring at the field. If your previous clash didn't fully dismiss (dropped packet, transient hiccup), the new clash now overrides and starts cleanly. If you reconnect mid-clash, the server includes the clash info in the resume so your QTE overlay rebuilds.
