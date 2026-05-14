@@ -368,6 +368,52 @@
   .pitch *{user-select:none}
   .player.movable{cursor:grab}
   .player.movable:active{cursor:grabbing}
+  /* Phase 3c: player-placed zones — chip row above the pitch during planning. */
+  .zone-place-row{
+    display: none;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 4px 0 8px;
+    padding: 6px 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .zone-place-row.on{ display: flex }
+  .zone-place-row .label{
+    font-family: "JetBrains Mono", monospace;
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--ink-dimmer);
+    margin-right: 6px;
+  }
+  .zone-chip{
+    padding: 5px 9px;
+    border: 1px solid currentColor;
+    background: var(--surface-2);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .zone-chip:hover{ background: var(--bg) }
+  .zone-chip.placed{ border-style: solid }
+  .zone-chip:not(.placed){ border-style: dashed }
+  .zone-chip.active{ outline: 2px solid var(--ink); outline-offset: 1px }
+  .zone-chip .swatch{
+    width: 10px; height: 10px; border-radius: 50%;
+    background: currentColor; opacity: 0.85;
+  }
+  .zone-chip .state{
+    color: var(--ink-dimmer); font-size: 9px; letter-spacing: 0.22em;
+  }
+  .pitch.placing-zone{ cursor: crosshair }
+
   /* Phase 4: full-screen cutscene overlay for MP4 playback on ability fire. */
   .cutscene-overlay{
     position: fixed; inset: 0;
@@ -1575,6 +1621,10 @@
     <div class="section-label" id="roster-label">[ Roster ]</div>
     <div class="char-row" id="char-row"></div>
   </section>
+
+  <div class="zone-place-row" id="zone-place-row">
+    <span class="label">Place Zones:</span>
+  </div>
 
   <section class="field-card" aria-label="Field of play">
     <span class="field-tag">Attack <span class="arrow">↑</span></span>
@@ -3360,6 +3410,20 @@
     // no more dragging players or the ball until the server sends turn-end.
     if (mpMatchStarted && mpMyAimsLocked) return;
     const p = svgPoint(e);
+    // Phase 3c: if a player-placed zone is queued for placement, this click
+    // stamps it at the cursor instead of starting a drag.
+    if (activePlacement){
+      e.preventDefault();
+      const x = Math.max(10, Math.min(530, p.x));
+      const y = Math.max(10, Math.min(790, p.y));
+      placeLocalZoneAt(activePlacement.playerId, activePlacement.zoneId, x, y);
+      activePlacement = null;
+      renderZonePlacementUI();
+      updatePitchPlacementCursor();
+      // Re-render zone overlay with the new placement included.
+      renderLocalPlacedZonesOverlay(lastServerZones);
+      return;
+    }
     const r = whichToGrab(p);
     if (!r) return;
     e.preventDefault();
@@ -5134,6 +5198,8 @@
   function clearMatchRoster(){
     if (matchRosterEl) matchRosterEl.classList.remove('on');
     clearZones();
+    clearLocalPlacedZones();
+    lastServerZones = [];
   }
 
   // ── Phase 3b: zone rendering ─────────────────────────────────────────
@@ -5162,6 +5228,121 @@
   }
   function clearZones(){
     if (zonesLayerEl) while (zonesLayerEl.firstChild) zonesLayerEl.removeChild(zonesLayerEl.firstChild);
+  }
+
+  // ── Phase 3c: player-placed zones ───────────────────────────────────
+  // Each planning phase, the client walks the local team's equipped
+  // abilities to find any zones marked `player-placed`. The user clicks
+  // on the pitch to drop each one. Placements travel with the aims
+  // message and are consumed by the server for one turn.
+  const zonePlaceRowEl = document.getElementById('zone-place-row');
+  let pendingPlaceableZones = []; // [{ playerId, zoneId, label, color, radius }]
+  let localPlacedZones      = {}; // { [playerId]: { [zoneId]: { x, y } } }
+  let activePlacement       = null; // { playerId, zoneId } currently being dropped
+  let lastServerZones       = []; // last `zones` array received, for re-render
+
+  function isMyTeamId(pid){
+    return (mpIAmHost && pid && pid[0] !== 'p')
+      ? false
+      : (TEAM_IDS_BY_TEAM[myTeam()] || []).indexOf(pid) >= 0;
+  }
+  function rebuildPendingPlaceableZones(){
+    pendingPlaceableZones = [];
+    if (!mpMatchStarted) return;
+    const myIds = TEAM_IDS_BY_TEAM[myTeam()] || [];
+    for (const pid of myIds){
+      const p = players[pid];
+      if (!p || !Array.isArray(p.weapons)) continue;
+      for (const abId of p.weapons){
+        if (!abId) continue;
+        const ab = db.abilities[abId];
+        if (!ab || !ab.config || !Array.isArray(ab.config.zones)) continue;
+        for (const z of ab.config.zones){
+          if (!z || z.placement !== 'player-placed') continue;
+          pendingPlaceableZones.push({
+            playerId: pid,
+            zoneId:   z.id,
+            label:    z.label || ab.name || 'Zone',
+            color:    z.color || '#ef2b3a',
+            radius:   z.radius | 0
+          });
+        }
+      }
+    }
+  }
+  function isZonePlaced(pid, zid){
+    return !!(localPlacedZones[pid] && localPlacedZones[pid][zid]);
+  }
+  function renderZonePlacementUI(){
+    if (!zonePlaceRowEl) return;
+    // Remove every chip; keep the static label.
+    const chips = zonePlaceRowEl.querySelectorAll('.zone-chip');
+    chips.forEach(c => c.remove());
+    if (!pendingPlaceableZones.length){
+      zonePlaceRowEl.classList.remove('on');
+      return;
+    }
+    zonePlaceRowEl.classList.add('on');
+    for (const entry of pendingPlaceableZones){
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'zone-chip' + (isZonePlaced(entry.playerId, entry.zoneId) ? ' placed' : '');
+      if (activePlacement && activePlacement.playerId === entry.playerId && activePlacement.zoneId === entry.zoneId){
+        chip.classList.add('active');
+      }
+      chip.style.color = entry.color;
+      const owner = players[entry.playerId];
+      const num = owner ? owner.num : entry.playerId;
+      chip.innerHTML = `<span class="swatch"></span>#${num} · ${entry.label}<span class="state">${isZonePlaced(entry.playerId, entry.zoneId) ? '✓' : 'TAP TO PLACE'}</span>`;
+      chip.addEventListener('click', () => {
+        if (mpMyAimsLocked) return;
+        if (activePlacement
+          && activePlacement.playerId === entry.playerId
+          && activePlacement.zoneId === entry.zoneId){
+          // Toggle off.
+          activePlacement = null;
+        } else {
+          activePlacement = { playerId: entry.playerId, zoneId: entry.zoneId, radius: entry.radius, color: entry.color };
+        }
+        renderZonePlacementUI();
+        updatePitchPlacementCursor();
+      });
+      zonePlaceRowEl.appendChild(chip);
+    }
+  }
+  function updatePitchPlacementCursor(){
+    if (!svg) return;
+    svg.classList.toggle('placing-zone', !!activePlacement);
+  }
+  function renderLocalPlacedZonesOverlay(serverZones){
+    // Combine server's zones list with my locally placed (not yet sent)
+    // player-placed zones so the user sees what they just dropped.
+    const merged = Array.isArray(serverZones) ? serverZones.slice() : [];
+    for (const pid of Object.keys(localPlacedZones)){
+      for (const zid of Object.keys(localPlacedZones[pid] || {})){
+        const pos = localPlacedZones[pid][zid];
+        const meta = pendingPlaceableZones.find(p => p.playerId === pid && p.zoneId === zid);
+        if (!meta || !pos) continue;
+        merged.push({
+          ownerId: pid, abilityId: '', zoneId: zid,
+          cx: pos.x, cy: pos.y,
+          radius: meta.radius, color: meta.color,
+          placement: 'player-placed'
+        });
+      }
+    }
+    renderZones(merged);
+  }
+  function clearLocalPlacedZones(){
+    localPlacedZones = {};
+    activePlacement = null;
+    pendingPlaceableZones = [];
+    renderZonePlacementUI();
+    updatePitchPlacementCursor();
+  }
+  function placeLocalZoneAt(playerId, zoneId, x, y){
+    if (!localPlacedZones[playerId]) localPlacedZones[playerId] = {};
+    localPlacedZones[playerId][zoneId] = { x, y };
   }
 
   // ── Ability-fired flash banner + media playback ─────────────────────
@@ -5393,7 +5574,14 @@
         refreshModeUI();
         refreshPossessionUI();
         refreshRosterUI();
-        renderZones(msg.zones);
+        // Fresh planning phase: server's placements were consumed; reset locals.
+        lastServerZones = Array.isArray(msg.zones) ? msg.zones : [];
+        localPlacedZones = {};
+        activePlacement = null;
+        rebuildPendingPlaceableZones();
+        renderZonePlacementUI();
+        updatePitchPlacementCursor();
+        renderLocalPlacedZonesOverlay(lastServerZones);
         if (typeof startTurnTimer === 'function') startTurnTimer();
         break;
       }
@@ -5772,7 +5960,20 @@
     }
     const myHolder = ballHolderId && players[ballHolderId].team === myT;
     const myBallAim = (myHolder && ballAim) ? { x: ballAim.x, y: ballAim.y } : null;
-    return { aims, ballAim: myBallAim, mode: myHolder ? mode : null };
+    // Phase 3c: send any player-placed zone positions along with aims so the
+    // server can use them when evaluating ability requirements.
+    const zonePlacements = {};
+    for (const pid of Object.keys(localPlacedZones)){
+      // Only forward placements for player IDs I own — sanity guard.
+      if (!teamIds(myT).includes(pid)) continue;
+      const m = {};
+      for (const zid of Object.keys(localPlacedZones[pid] || {})){
+        const z = localPlacedZones[pid][zid];
+        if (z && typeof z.x === 'number' && typeof z.y === 'number') m[zid] = { x: z.x, y: z.y };
+      }
+      if (Object.keys(m).length) zonePlacements[pid] = m;
+    }
+    return { aims, ballAim: myBallAim, mode: myHolder ? mode : null, zonePlacements };
   }
 
   function mpLockIn(){
@@ -5783,7 +5984,8 @@
       type: 'aims',
       aims: mpMyAimsLocked.aims,
       ballAim: mpMyAimsLocked.ballAim,
-      mode: mpMyAimsLocked.mode
+      mode: mpMyAimsLocked.mode,
+      zonePlacements: mpMyAimsLocked.zonePlacements || {}
     });
     lockBtn.disabled = true;
     hint.textContent = `Locked — waiting for ${mpPartner ? mpPartner.username : 'opponent'}…`;
@@ -5902,7 +6104,13 @@
     refreshArrows();
     refreshModeUI();
     setRosterFromMatchStart(msg);
-    renderZones(msg.zones);
+    lastServerZones = Array.isArray(msg.zones) ? msg.zones : [];
+    localPlacedZones = {};
+    activePlacement = null;
+    rebuildPendingPlaceableZones();
+    renderZonePlacementUI();
+    updatePitchPlacementCursor();
+    renderLocalPlacedZonesOverlay(lastServerZones);
     mpOverlay.classList.remove('on');
     hideMainMenu();
     startMatchHeartbeat();

@@ -140,8 +140,12 @@ function createMatch(wsA, wsB, opts){
     turn: 1,
     scoreUs: 0,
     scoreThem: 0,
-    aimsA: null,                // us-team aims
-    aimsB: null,                // them-team aims
+    aimsA: null,                // us-team aims (incl. zonePlacements)
+    aimsB: null,                // them-team aims (incl. zonePlacements)
+    // Per-player, per-zone placements for player-placed zones, set at the
+    // start of each turn's animation from the locked-in aims. Reset at end
+    // of turn so each planning phase requires fresh placements.
+    placedZones: {},
     animating: false,
     runtime: null,
     clash: null,                // { ctx, scoresA, scoresB, resolved? }
@@ -385,6 +389,27 @@ function buildRuntime(match){
 function startTurnAnimation(match){
   match.animating = true;
   match.runtime = buildRuntime(match);
+  // Merge zone placements from both sides. Each side only owns its own team's
+  // player ids, so collisions can't happen in practice.
+  const placements = {};
+  const merge = (src) => {
+    if (!src) return;
+    for (const pid of Object.keys(src)){
+      placements[pid] = placements[pid] || {};
+      for (const zid of Object.keys(src[pid] || {})){
+        const z = src[pid][zid];
+        if (z && typeof z.x === 'number' && typeof z.y === 'number'){
+          placements[pid][zid] = {
+            x: clamp(z.x, F_LEFT, F_RIGHT),
+            y: clamp(z.y, F_TOP,  F_BOT)
+          };
+        }
+      }
+    }
+  };
+  merge(match.aimsA && match.aimsA.zonePlacements);
+  merge(match.aimsB && match.aimsB.zonePlacements);
+  match.placedZones = placements;
   match.aimsA = null;
   match.aimsB = null;
 }
@@ -542,12 +567,16 @@ function endTurnServer(match){
   for (const ev of fired){
     broadcastMatch(match, { type: 'ability-fired', ...ev });
   }
+  // Send turn-end with the zones snapshot BEFORE clearing placements — so
+  // the client briefly sees the zones from the turn that just resolved.
   broadcastMatch(match, {
     type: 'turn-end',
     state: snapshotState(match),
     turn: match.turn,
     zones: serializeActiveZones(match)
   });
+  // Now clear so the next planning phase starts with no player-placed zones.
+  match.placedZones = {};
   // If auto-clash fired, immediately broadcast clash-start so both clients
   // jump into the QTE overlay. The aims handler is gated on match.clash so
   // neither side can lock in until the clash resolves.
@@ -580,8 +609,17 @@ function ensureStatMods(match, pid){
   return match.statMods[pid];
 }
 
-// ── Phase 3b: zone helpers ─────────────────────────────────────────────────
+// ── Phase 3b/3c: zone helpers ──────────────────────────────────────────────
+// Resolves the center of a zone to absolute field coords. Fixed-offset zones
+// follow their owner; player-placed zones use the coordinates the player
+// stamped in this turn's aims. Returns null if a player-placed zone hasn't
+// been placed (i.e. the player skipped it this planning phase).
 function zoneCenter(match, ownerId, zone){
+  if (zone.placement === 'player-placed'){
+    const p = match.placedZones && match.placedZones[ownerId] && match.placedZones[ownerId][zone.id];
+    if (!p) return null;
+    return { x: p.x, y: p.y };
+  }
   const p = match.players[ownerId];
   if (!p) return null;
   return { x: p.x + ((zone.offsetX | 0) || 0), y: p.y + ((zone.offsetY | 0) || 0) };
@@ -637,8 +675,8 @@ function evalRequirementsMet(match, pid, cfg){
     } else if (req.kind === 'zone'){
       const zone = findZone(cfg, req.zoneId);
       if (!zone) return false;
-      // Player-placed zones land in Phase 3c — until then treat as unmet.
-      if (zone.placement === 'player-placed') return false;
+      // Player-placed zones are checked by zoneTargetPresent — which falls
+      // through `zoneCenter` and returns null if the player didn't place it.
       if (!zoneTargetPresent(match, pid, zone)) return false;
     } else {
       return false;
@@ -681,11 +719,10 @@ function fireRewards(match, pid, ability, fired){
     } else if (r.kind === 'teleport-to-zone'){
       const zone = findZone(cfg, r.zoneId);
       if (!zone) continue;
-      if (zone.placement === 'player-placed') continue; // 3c
       const owner = match.players[pid];
       if (!owner) continue;
       const center = zoneCenter(match, pid, zone);
-      if (!center) continue;
+      if (!center) continue; // player-placed but not placed this turn
       // Clamp to playable field bounds so we never teleport into the wall.
       owner.x = Math.max(F_LEFT + PLAYER_R, Math.min(F_RIGHT - PLAYER_R, center.x));
       owner.y = Math.max(F_TOP  + PLAYER_R, Math.min(F_BOT   - PLAYER_R, center.y));
@@ -699,7 +736,6 @@ function fireRewards(match, pid, ability, fired){
       if (match.clash || pendingClash) continue; // never stack clashes
       const zone = findZone(cfg, r.zoneId);
       if (!zone) continue;
-      if (zone.placement === 'player-placed') continue;
       const targetId = zoneTargetPresent(match, pid, zone);
       // Only enemies trigger auto-clash; ball/teammate/self targets skip.
       if (!targetId || targetId === 'ball') continue;
@@ -775,15 +811,17 @@ function serializeActiveZones(match){
       const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
       for (const z of zones){
         if (!z || !z.id) continue;
-        if (z.placement === 'player-placed') continue;
+        const center = zoneCenter(match, pid, z);
+        if (!center) continue; // player-placed but not placed yet
         out.push({
           ownerId:   pid,
           abilityId: abId,
           zoneId:    z.id,
-          cx:        round1(player.x + ((z.offsetX | 0) || 0)),
-          cy:        round1(player.y + ((z.offsetY | 0) || 0)),
+          cx:        round1(center.x),
+          cy:        round1(center.y),
           radius:    (z.radius | 0) || 0,
-          color:     z.color || '#ef2b3a'
+          color:     z.color || '#ef2b3a',
+          placement: z.placement || 'fixed-offset'
         });
       }
     }
@@ -1102,7 +1140,14 @@ function handleMessage(ws, msg){
       // anyway since tickMatch bails while clash is active.
       if (match.clash && !match.clash.resolved) break;
       const slot = c.username === match.playerA.username ? 'aimsA' : 'aimsB';
-      match[slot] = { aims: msg.aims || {}, ballAim: msg.ballAim || null, mode: msg.mode || 'kick' };
+      // Player-placed zones travel in zonePlacements: { [playerId]: { [zoneId]: { x, y } } }
+      const placements = (msg.zonePlacements && typeof msg.zonePlacements === 'object') ? msg.zonePlacements : {};
+      match[slot] = {
+        aims: msg.aims || {},
+        ballAim: msg.ballAim || null,
+        mode: msg.mode || 'kick',
+        zonePlacements: placements
+      };
       // Tell the other side
       const oppWs = c.username === match.playerA.username ? match.playerB.ws : match.playerA.ws;
       send(oppWs, { type: 'opponent-locked' });

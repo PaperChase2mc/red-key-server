@@ -809,6 +809,97 @@ async function testAutoClashStartsClash(){
   a.close(); b.close();
 }
 
+async function testPlacedZoneFiresWhenPlaced(){
+  // Player-placed zone on p10 dropped right on top of p5 (270, 260).
+  // Requirement "enemy in zone" should be met → ability fires.
+  const a = new TestClient(uniq('pp-a'));
+  const b = new TestClient(uniq('pp-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_placed_meets';
+  const zoneId    = 'z_placed';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Trap', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: {
+        scope: 'off-ball', cooldownTurns: 5,
+        zones: [{ id: zoneId, label: 'Trap', placement: 'player-placed',
+                  offsetX: 0, offsetY: 0, radius: 40,
+                  color: '#fbbf24', target: 'enemy' }],
+        requirements: [{ kind: 'zone', zoneId }],
+        rewards: [{ kind: 'stat-boost', stat: 'speed', amount: 1 }]
+      }
+    }
+  };
+  const equipped = [
+    { name: 'Trapper', num: 8, stats: { speed: 2, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  // A places the trap right on p5. B sends no-op aims.
+  a.send({
+    type: 'aims',
+    aims: { p10: null, p11: null, p7: null },
+    ballAim: null, mode: 'kick',
+    zonePlacements: { p10: { [zoneId]: { x: 270, y: 260 } } }
+  });
+  await b.expect('opponent-locked');
+  submitNoOpAims(b, matchB);
+  await a.expect('opponent-locked');
+  // Server should fire the ability — enemy p5 sits inside the dropped trap.
+  await a.expect('ability-fired', 8000);
+  a.close(); b.close();
+}
+
+async function testPlacedZoneSkipsWhenUnplaced(){
+  // Same ability as above, but A doesn't include any zonePlacements. The
+  // server should treat the zone as unplaced and skip the ability.
+  const a = new TestClient(uniq('pps-a'));
+  const b = new TestClient(uniq('pps-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_placed_skips';
+  const zoneId    = 'z_placed';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Unplaced', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: {
+        scope: 'off-ball', cooldownTurns: 5,
+        zones: [{ id: zoneId, label: 'Trap', placement: 'player-placed',
+                  offsetX: 0, offsetY: 0, radius: 40,
+                  color: '#fbbf24', target: 'enemy' }],
+        requirements: [{ kind: 'zone', zoneId }],
+        rewards: [{ kind: 'stat-boost', stat: 'speed', amount: 1 }]
+      }
+    }
+  };
+  const equipped = [
+    { name: 'Tester', num: 8, stats: { speed: 2, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  await a.expect('turn-end', 8000);
+  // Nothing should have fired.
+  await a.expectQuiet('ability-fired', 200);
+  a.close(); b.close();
+}
+
 async function testAimsWithoutMatch(){
   // Send aims when not in a match — server should not crash, no broadcast.
   const a = new TestClient(uniq('noom'));
@@ -849,7 +940,9 @@ const SCENARIOS = [
   ['ability: zone-req met (enemy in zone) fires',     testZoneReqMetFires],
   ['ability: zone-req unmet (radius too small) skips',testZoneReqUnmetSkips],
   ['ability: teleport-to-zone moves the player',      testTeleportToZoneMovesPlayer],
-  ['ability: auto-clash spawns clash-start broadcast',testAutoClashStartsClash]
+  ['ability: auto-clash spawns clash-start broadcast',testAutoClashStartsClash],
+  ['ability: player-placed zone fires when placed',   testPlacedZoneFiresWhenPlaced],
+  ['ability: player-placed zone skips when unplaced', testPlacedZoneSkipsWhenUnplaced]
 ];
 
 async function main(){
