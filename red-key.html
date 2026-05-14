@@ -368,6 +368,23 @@
   .pitch *{user-select:none}
   .player.movable{cursor:grab}
   .player.movable:active{cursor:grabbing}
+  /* Phase 5: sandbox draggables on the test pitch. */
+  .sandbox-draggable{ cursor: grab }
+  .sandbox-draggable:active{ cursor: grabbing }
+  #sandbox-pitch.placing-zone{ cursor: crosshair }
+  #sandbox-result-body .row{ display:flex; gap:8px; align-items:flex-start; margin-bottom: 4px }
+  #sandbox-result-body .tag{
+    display:inline-block; padding: 1px 7px;
+    font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
+    font-family: "JetBrains Mono", monospace;
+    border: 1px solid currentColor;
+    min-width: 56px; text-align: center;
+  }
+  #sandbox-result-body .tag.met{ color: #4ade80 }
+  #sandbox-result-body .tag.unmet{ color: var(--red) }
+  #sandbox-result-body .tag.skip{ color: var(--ink-dimmer) }
+  #sandbox-result-body .tag.reward{ color: var(--yellow) }
+
   /* Phase 3c: player-placed zones — chip row above the pitch during planning. */
   .zone-place-row{
     display: none;
@@ -2169,6 +2186,70 @@
   </div>
 </div>
 
+<!-- Phase 5: Skill Builder ability test sandbox -->
+<div class="full-overlay" id="sandbox-overlay" role="dialog" aria-modal="true" aria-label="Ability sandbox">
+  <div class="overlay-card" style="max-width: 640px">
+    <h2 class="overlay-title"><em>Test</em> Ability</h2>
+    <div class="overlay-sub" id="sandbox-subtitle">Drag the players + ball, then press Fire Turn.</div>
+
+    <div class="admin-section">
+      <h3>Scenario</h3>
+      <svg id="sandbox-pitch" viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg"
+           style="display:block;width:100%;max-width:300px;margin:0 auto;background:var(--bg);border:1px solid var(--line);touch-action:none;user-select:none">
+        <rect x="2" y="2" width="296" height="396" fill="none" stroke="#3a3a48" stroke-width="0.6"/>
+        <line x1="2" y1="200" x2="298" y2="200" stroke="#3a3a48" stroke-width="0.4" stroke-dasharray="3 3"/>
+        <g id="sandbox-zones-layer" pointer-events="none"></g>
+        <circle id="sandbox-ball" class="sandbox-draggable" cx="150" cy="200" r="6" fill="#fbbf24" stroke="#5a3c00" stroke-width="1"/>
+        <g id="sandbox-owner" class="sandbox-draggable" transform="translate(150, 300)">
+          <circle r="14" fill="#10b981" stroke="#0a6e51" stroke-width="2"/>
+          <text x="0" y="4" text-anchor="middle" fill="#0a0a0a" font-family="Saira Condensed,sans-serif" font-weight="800" font-size="11">ME</text>
+        </g>
+        <g id="sandbox-enemy" class="sandbox-draggable" transform="translate(150, 100)">
+          <circle r="14" fill="#ef2b3a" stroke="#5a0a14" stroke-width="2"/>
+          <text x="0" y="4" text-anchor="middle" fill="#ffffff" font-family="Saira Condensed,sans-serif" font-weight="800" font-size="11">EN</text>
+        </g>
+      </svg>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.16em;color:var(--ink-dimmer);text-transform:uppercase;margin-top:8px;text-align:center">
+        Drag any of: <span style="color:#10b981">Owner</span> · <span style="color:#ef2b3a">Enemy</span> · <span style="color:#fbbf24">Ball</span>
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <h3>Modifiers</h3>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sandbox-has-ball" />
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Owner currently holds the ball</span>
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sandbox-clash-win" />
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Owner won a clash this turn</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="admin-section" id="sandbox-place-section" style="display:none">
+      <h3>Player-Placed Zones</h3>
+      <div id="sandbox-place-chips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.16em;color:var(--ink-dimmer);text-transform:uppercase;margin-top:6px">
+        Tap a chip then click on the test pitch to drop it.
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <button class="primary-btn" id="sandbox-fire" type="button">Fire Turn</button>
+      <button class="ghost-btn"   id="sandbox-reset" type="button">Reset Scenario</button>
+    </div>
+
+    <div class="admin-section" id="sandbox-result-section" style="display:none">
+      <h3>Result</h3>
+      <div id="sandbox-result-body" style="font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:var(--ink)"></div>
+    </div>
+
+    <button class="ghost-btn" id="sandbox-close" type="button">← Back to Skill Builder</button>
+  </div>
+</div>
+
 <!-- Phase 4: cutscene overlay (full screen video on ability fire) -->
 <div class="cutscene-overlay" id="cutscene-overlay">
   <video class="cutscene-video" id="cutscene-video" playsinline preload="auto"></video>
@@ -2303,6 +2384,7 @@
     <div class="admin-section" style="background:transparent;border:none;padding:0">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="primary-btn" id="sb-save" type="button">Save Ability</button>
+        <button class="ghost-btn"   id="sb-test" type="button">Test Ability</button>
         <button class="ghost-btn"   id="sb-clear" type="button">Clear Form</button>
         <span class="auth-error" id="sb-msg" style="flex:1"></span>
       </div>
@@ -6772,6 +6854,340 @@
       renderSkillList();
     } catch (e){ sbMsgEl.textContent = (e && e.message) || 'Save crashed.'; }
   }
+
+  // ── Phase 5: in-builder sandbox ──────────────────────────────────────
+  // Runs a CLIENT-SIDE mirror of the server's ability evaluator against a
+  // hand-arranged scenario, so admins can verify their ability fires before
+  // saving + putting it on a real player. No WS / matchmaking involved.
+  const sandboxOverlay     = document.getElementById('sandbox-overlay');
+  const sandboxPitch       = document.getElementById('sandbox-pitch');
+  const sandboxOwnerG      = document.getElementById('sandbox-owner');
+  const sandboxEnemyG      = document.getElementById('sandbox-enemy');
+  const sandboxBall        = document.getElementById('sandbox-ball');
+  const sandboxZonesLayer  = document.getElementById('sandbox-zones-layer');
+  const sandboxHasBall     = document.getElementById('sandbox-has-ball');
+  const sandboxClashWin    = document.getElementById('sandbox-clash-win');
+  const sandboxPlaceSection= document.getElementById('sandbox-place-section');
+  const sandboxPlaceChips  = document.getElementById('sandbox-place-chips');
+  const sandboxFireBtn     = document.getElementById('sandbox-fire');
+  const sandboxResetBtn    = document.getElementById('sandbox-reset');
+  const sandboxResultSec   = document.getElementById('sandbox-result-section');
+  const sandboxResultBody  = document.getElementById('sandbox-result-body');
+  const sandboxSubtitle    = document.getElementById('sandbox-subtitle');
+
+  const SANDBOX_W = 300, SANDBOX_H = 400;
+  // Sandbox state mirrors a minimal slice of match state.
+  const sandboxState = {
+    owner: { x: 150, y: 300 },
+    enemy: { x: 150, y: 100 },
+    ball:  { x: 150, y: 200 },
+    ownerHasBall: false,
+    clashWin: false,
+    placedZones: {}   // { [zoneId]: { x, y } }
+  };
+  let sandboxDrag = null;   // { kind: 'owner'|'enemy'|'ball', offsetX, offsetY }
+  let sandboxActivePlacement = null; // { zoneId, color, radius }
+
+  function sandboxPointFromEvent(e){
+    const r = sandboxPitch.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width)  * SANDBOX_W;
+    const y = ((e.clientY - r.top)  / r.height) * SANDBOX_H;
+    return { x: Math.max(8, Math.min(SANDBOX_W - 8, x)),
+             y: Math.max(8, Math.min(SANDBOX_H - 8, y)) };
+  }
+  function refreshSandboxPositions(){
+    sandboxOwnerG.setAttribute('transform', `translate(${sandboxState.owner.x.toFixed(1)}, ${sandboxState.owner.y.toFixed(1)})`);
+    sandboxEnemyG.setAttribute('transform', `translate(${sandboxState.enemy.x.toFixed(1)}, ${sandboxState.enemy.y.toFixed(1)})`);
+    if (sandboxState.ownerHasBall){
+      sandboxBall.setAttribute('cx', sandboxState.owner.x.toFixed(1));
+      sandboxBall.setAttribute('cy', (sandboxState.owner.y + 18).toFixed(1));
+    } else {
+      sandboxBall.setAttribute('cx', sandboxState.ball.x.toFixed(1));
+      sandboxBall.setAttribute('cy', sandboxState.ball.y.toFixed(1));
+    }
+  }
+  function refreshSandboxZones(){
+    while (sandboxZonesLayer.firstChild) sandboxZonesLayer.removeChild(sandboxZonesLayer.firstChild);
+    const cfg = currentSkillConfig || {};
+    const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
+    const svgNS = 'http://www.w3.org/2000/svg';
+    for (const z of zones){
+      if (!z) continue;
+      const center = sandboxZoneCenter(z);
+      if (!center) continue;
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', center.x);
+      c.setAttribute('cy', center.y);
+      c.setAttribute('r',  z.radius | 0);
+      c.setAttribute('fill', z.color || '#ef2b3a');
+      c.setAttribute('fill-opacity', '0.12');
+      c.setAttribute('stroke', z.color || '#ef2b3a');
+      c.setAttribute('stroke-opacity', '0.6');
+      c.setAttribute('stroke-width', '1.5');
+      c.setAttribute('stroke-dasharray', '4 3');
+      sandboxZonesLayer.appendChild(c);
+    }
+  }
+  // Resolve a zone's center in sandbox coords. Mirrors server zoneCenter.
+  function sandboxZoneCenter(zone){
+    if (zone.placement === 'player-placed'){
+      const p = sandboxState.placedZones[zone.id];
+      return p ? { x: p.x, y: p.y } : null;
+    }
+    return {
+      x: sandboxState.owner.x + ((zone.offsetX | 0) || 0),
+      y: sandboxState.owner.y + ((zone.offsetY | 0) || 0)
+    };
+  }
+  function sandboxInZone(entity, zone, center){
+    if (!entity || !center) return false;
+    const dx = entity.x - center.x;
+    const dy = entity.y - center.y;
+    return Math.hypot(dx, dy) <= ((zone.radius | 0) || 0);
+  }
+  function sandboxZoneTargetPresent(zone){
+    const center = sandboxZoneCenter(zone);
+    if (!center) return null;
+    const t = zone.target || 'enemy';
+    if (t === 'ball'){
+      const ballPos = sandboxState.ownerHasBall
+        ? { x: sandboxState.owner.x, y: sandboxState.owner.y + 18 }
+        : sandboxState.ball;
+      return sandboxInZone(ballPos, zone, center) ? 'ball' : null;
+    }
+    if (t === 'self')     return sandboxInZone(sandboxState.owner, zone, center) ? 'owner' : null;
+    if (t === 'teammate') return null; // sandbox has only one teammate (self)
+    if (t === 'enemy')    return sandboxInZone(sandboxState.enemy, zone, center) ? 'enemy' : null;
+    if (t === 'enemy-with-ball'){
+      // The enemy can only "have the ball" if the owner doesn't.
+      if (sandboxState.ownerHasBall) return null;
+      return sandboxInZone(sandboxState.enemy, zone, center) ? 'enemy' : null;
+    }
+    return null;
+  }
+
+  function refreshSandboxPlaceChips(){
+    const cfg = currentSkillConfig || {};
+    const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
+    const placeable = zones.filter(z => z && z.placement === 'player-placed');
+    while (sandboxPlaceChips.firstChild) sandboxPlaceChips.removeChild(sandboxPlaceChips.firstChild);
+    if (placeable.length === 0){
+      sandboxPlaceSection.style.display = 'none';
+      return;
+    }
+    sandboxPlaceSection.style.display = '';
+    for (const z of placeable){
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'zone-chip' + (sandboxState.placedZones[z.id] ? ' placed' : '');
+      if (sandboxActivePlacement && sandboxActivePlacement.zoneId === z.id) chip.classList.add('active');
+      chip.style.color = z.color || '#ef2b3a';
+      const placed = !!sandboxState.placedZones[z.id];
+      chip.innerHTML = `<span class="swatch"></span>${escapeHtml(z.label || z.id)}<span class="state">${placed ? '✓' : 'TAP TO PLACE'}</span>`;
+      chip.addEventListener('click', () => {
+        if (sandboxActivePlacement && sandboxActivePlacement.zoneId === z.id){
+          sandboxActivePlacement = null;
+        } else {
+          sandboxActivePlacement = { zoneId: z.id, color: z.color, radius: z.radius };
+        }
+        sandboxPitch.classList.toggle('placing-zone', !!sandboxActivePlacement);
+        refreshSandboxPlaceChips();
+      });
+      sandboxPlaceChips.appendChild(chip);
+    }
+  }
+
+  function sandboxPointerDown(e){
+    if (!sandboxOverlay.classList.contains('on')) return;
+    e.preventDefault();
+    const p = sandboxPointFromEvent(e);
+    if (sandboxActivePlacement){
+      sandboxState.placedZones[sandboxActivePlacement.zoneId] = { x: p.x, y: p.y };
+      sandboxActivePlacement = null;
+      sandboxPitch.classList.remove('placing-zone');
+      refreshSandboxPlaceChips();
+      refreshSandboxZones();
+      return;
+    }
+    // Pick the nearest draggable within ~22px.
+    const cands = [
+      { kind: 'owner', x: sandboxState.owner.x, y: sandboxState.owner.y },
+      { kind: 'enemy', x: sandboxState.enemy.x, y: sandboxState.enemy.y },
+      { kind: 'ball',  x: sandboxState.ball.x,  y: sandboxState.ball.y  }
+    ];
+    let best = null, bestD = 22;
+    for (const c of cands){
+      const d = Math.hypot(p.x - c.x, p.y - c.y);
+      if (d < bestD){ best = c; bestD = d; }
+    }
+    if (!best) return;
+    sandboxDrag = { kind: best.kind };
+    try { sandboxPitch.setPointerCapture(e.pointerId); } catch(_){}
+  }
+  function sandboxPointerMove(e){
+    if (!sandboxDrag) return;
+    const p = sandboxPointFromEvent(e);
+    if (sandboxDrag.kind === 'owner') sandboxState.owner = { x: p.x, y: p.y };
+    else if (sandboxDrag.kind === 'enemy') sandboxState.enemy = { x: p.x, y: p.y };
+    else if (sandboxDrag.kind === 'ball')  sandboxState.ball  = { x: p.x, y: p.y };
+    refreshSandboxPositions();
+    refreshSandboxZones();
+  }
+  function sandboxPointerUp(e){
+    if (!sandboxDrag) return;
+    sandboxDrag = null;
+    try { sandboxPitch.releasePointerCapture(e.pointerId); } catch(_){}
+  }
+  sandboxPitch.addEventListener('pointerdown', sandboxPointerDown);
+  sandboxPitch.addEventListener('pointermove', sandboxPointerMove);
+  sandboxPitch.addEventListener('pointerup',   sandboxPointerUp);
+  sandboxPitch.addEventListener('pointercancel', sandboxPointerUp);
+
+  sandboxHasBall.addEventListener('change', () => {
+    sandboxState.ownerHasBall = !!sandboxHasBall.checked;
+    refreshSandboxPositions();
+    refreshSandboxZones();
+  });
+  sandboxClashWin.addEventListener('change', () => {
+    sandboxState.clashWin = !!sandboxClashWin.checked;
+  });
+
+  function resetSandboxScenario(){
+    sandboxState.owner = { x: 150, y: 300 };
+    sandboxState.enemy = { x: 150, y: 100 };
+    sandboxState.ball  = { x: 150, y: 200 };
+    sandboxState.ownerHasBall = false;
+    sandboxState.clashWin = false;
+    sandboxState.placedZones = {};
+    sandboxActivePlacement = null;
+    sandboxHasBall.checked = false;
+    sandboxClashWin.checked = false;
+    sandboxPitch.classList.remove('placing-zone');
+    sandboxResultSec.style.display = 'none';
+    refreshSandboxPositions();
+    refreshSandboxZones();
+    refreshSandboxPlaceChips();
+  }
+  sandboxResetBtn.addEventListener('click', resetSandboxScenario);
+
+  // ── Sandbox evaluator (mirror of server) ────────────────────────────
+  function runSandboxEvaluation(){
+    const cfg = currentSkillConfig || {};
+    const log = [];
+    const rewardLog = [];
+    let eligible = true;
+    let reqsMet = true;
+
+    // Scope.
+    if (cfg.scope === 'on-ball' && !sandboxState.ownerHasBall){
+      eligible = false;
+      log.push({ tag: 'SKIP', text: 'Scope is on-ball, but owner does not have the ball.' });
+    } else if (cfg.scope === 'off-ball' && sandboxState.ownerHasBall){
+      eligible = false;
+      log.push({ tag: 'SKIP', text: 'Scope is off-ball, but owner has the ball.' });
+    }
+
+    if (eligible){
+      const reqs = Array.isArray(cfg.requirements) ? cfg.requirements : [];
+      if (reqs.length === 0){
+        log.push({ tag: 'MET', text: 'No requirements — fires every cooldown.' });
+      }
+      for (const req of reqs){
+        if (req.kind === 'clash-and-win'){
+          const ok = !!sandboxState.clashWin;
+          log.push({ tag: ok ? 'MET' : 'UNMET', text: 'Clash and Win' + (ok ? '' : ' (toggle the modifier to test)') });
+          if (!ok) reqsMet = false;
+        } else if (req.kind === 'zone'){
+          const zone = (cfg.zones || []).find(z => z && z.id === req.zoneId);
+          if (!zone){
+            log.push({ tag: 'UNMET', text: `Zone "${req.zoneId}" missing.` });
+            reqsMet = false; continue;
+          }
+          if (zone.placement === 'player-placed' && !sandboxState.placedZones[zone.id]){
+            log.push({ tag: 'UNMET', text: `Player-placed zone "${zone.label || zone.id}" not dropped yet.` });
+            reqsMet = false; continue;
+          }
+          const hit = sandboxZoneTargetPresent(zone);
+          if (hit){
+            log.push({ tag: 'MET', text: `${zone.target} found in zone "${zone.label || zone.id}".` });
+          } else {
+            log.push({ tag: 'UNMET', text: `No ${zone.target} in zone "${zone.label || zone.id}".` });
+            reqsMet = false;
+          }
+        } else {
+          log.push({ tag: 'UNMET', text: `Unknown requirement kind "${req.kind}".` });
+          reqsMet = false;
+        }
+      }
+    }
+
+    if (eligible && reqsMet){
+      const rewards = Array.isArray(cfg.rewards) ? cfg.rewards : [];
+      if (rewards.length === 0){
+        rewardLog.push({ tag: 'SKIP', text: 'No rewards — ability would fire but do nothing.' });
+      }
+      for (const r of rewards){
+        if (r.kind === 'stat-boost'){
+          rewardLog.push({ tag: 'REWARD', text: `Stat boost: ${r.stat} ${r.amount > 0 ? '+' : ''}${r.amount}` });
+        } else if (r.kind === 'give-ball'){
+          rewardLog.push({ tag: 'REWARD', text: 'Owner is given the ball.' });
+        } else if (r.kind === 'teleport-to-ball'){
+          rewardLog.push({ tag: 'REWARD', text: `Owner teleports to the ball at (${Math.round(sandboxState.ball.x)}, ${Math.round(sandboxState.ball.y)}).` });
+        } else if (r.kind === 'teleport-to-zone'){
+          const zone = (cfg.zones || []).find(z => z && z.id === r.zoneId);
+          if (!zone){
+            rewardLog.push({ tag: 'SKIP', text: `teleport-to-zone target zone "${r.zoneId}" missing.` });
+          } else {
+            const c = sandboxZoneCenter(zone);
+            if (!c) rewardLog.push({ tag: 'SKIP', text: `Zone "${zone.label || zone.id}" has no center (unplaced).` });
+            else    rewardLog.push({ tag: 'REWARD', text: `Owner teleports to zone "${zone.label || zone.id}" at (${Math.round(c.x)}, ${Math.round(c.y)}).` });
+          }
+        } else if (r.kind === 'auto-clash'){
+          const zone = (cfg.zones || []).find(z => z && z.id === r.zoneId);
+          if (!zone){
+            rewardLog.push({ tag: 'SKIP', text: `auto-clash target zone "${r.zoneId}" missing.` });
+          } else {
+            const target = sandboxZoneTargetPresent(zone);
+            if (target === 'enemy') rewardLog.push({ tag: 'REWARD', text: `Auto-clash starts vs the enemy in zone "${zone.label || zone.id}".` });
+            else                     rewardLog.push({ tag: 'SKIP', text: `auto-clash needs an enemy in zone "${zone.label || zone.id}" (got ${target || 'nothing'}).` });
+          }
+        } else {
+          rewardLog.push({ tag: 'SKIP', text: `Unknown reward kind "${r.kind}".` });
+        }
+      }
+    }
+
+    // Render results.
+    sandboxResultSec.style.display = '';
+    const header = (eligible && reqsMet)
+      ? '<div style="color:#4ade80;font-weight:700;letter-spacing:0.18em;margin-bottom:8px">ABILITY FIRES</div>'
+      : '<div style="color:var(--red);font-weight:700;letter-spacing:0.18em;margin-bottom:8px">ABILITY DOES NOT FIRE</div>';
+    const html = [header, '<div style="color:var(--ink-dim);text-transform:uppercase;font-size:9px;letter-spacing:0.22em;margin:6px 0 4px">Eligibility & Requirements</div>'];
+    for (const e of log){
+      html.push(`<div class="row"><span class="tag ${e.tag === 'MET' ? 'met' : (e.tag === 'UNMET' ? 'unmet' : 'skip')}">${e.tag}</span><span>${escapeHtml(e.text)}</span></div>`);
+    }
+    if (eligible && reqsMet){
+      html.push('<div style="color:var(--ink-dim);text-transform:uppercase;font-size:9px;letter-spacing:0.22em;margin:10px 0 4px">Rewards</div>');
+      for (const e of rewardLog){
+        html.push(`<div class="row"><span class="tag ${e.tag === 'REWARD' ? 'reward' : 'skip'}">${e.tag}</span><span>${escapeHtml(e.text)}</span></div>`);
+      }
+    }
+    sandboxResultBody.innerHTML = html.join('');
+  }
+  sandboxFireBtn.addEventListener('click', runSandboxEvaluation);
+
+  function openSandbox(){
+    sandboxSubtitle.textContent = (sbNameEl.value || '').trim()
+      ? `Testing: "${sbNameEl.value.trim()}"`
+      : 'Drag the players + ball, then press Fire Turn.';
+    resetSandboxScenario();
+    sandboxOverlay.classList.add('on');
+  }
+  function closeSandbox(){
+    sandboxOverlay.classList.remove('on');
+  }
+  document.getElementById('sb-test').addEventListener('click', openSandbox);
+  document.getElementById('sandbox-close').addEventListener('click', closeSandbox);
 
   document.getElementById('sb-save').addEventListener('click', saveSkillFromForm);
   document.getElementById('sb-clear').addEventListener('click', clearSkillForm);
