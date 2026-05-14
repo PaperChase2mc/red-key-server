@@ -212,7 +212,8 @@ function buildMatchStart(match, role){
     animating: !!match.animating,
     iLocked: role === 'us' ? !!match.aimsA : !!match.aimsB,
     oppLocked: role === 'us' ? !!match.aimsB : !!match.aimsA,
-    clash: clashInfo
+    clash: clashInfo,
+    zones: serializeActiveZones(match)
   };
 }
 function serializeAllPlayers(match){
@@ -528,37 +529,34 @@ function endTurnServer(match){
   for (const id in match.players){
     if (match.players[id].frozen > 0) match.players[id].frozen -= 1;
   }
-  // Phase 3a: evaluate equipped abilities, fire any whose requirements are
-  // met and whose cooldown has expired. Rewards mutate match state for the
-  // turn we're about to start. Fired events are broadcast as their own
-  // messages so the client can flash UI.
-  const fired = evaluateAbilities(match);
-  // Decrement cooldowns AFTER evaluation so a freshly-fired ability starts
-  // its cooldown at the configured number (not number-1).
+  // Evaluate equipped abilities; fire any whose requirements are met and
+  // whose cooldown has expired. Rewards mutate match state for the turn we're
+  // about to start. Auto-clash rewards can additionally set match.clash so
+  // the very next thing the players do is the QTE.
+  const { fired, autoClashStarted } = evaluateAbilities(match);
   decrementCooldowns(match);
-  // Stat boosts apply to the upcoming turn only — clear them after this turn
-  // animates. We zero them HERE (before broadcasting turn-end) so the new
-  // snapshot can include the boosted runtime stats for the next planning
-  // phase if we ever expose them; in 3a they only affect speed/shooting/stamina
-  // during the simulation tick, so zeroing right before turn-end is fine.
-  // Actually: hold them through the NEXT animation. We zero in evaluator on
-  // the call AFTER they fired, gated by `_appliedAt`.
   match.clashWinsThisTurn = new Set();
   match.turn += 1;
   match.animating = false;
   match.runtime = null;
-  // Send each fired ability as its own event for the visual flash.
   for (const ev of fired){
     broadcastMatch(match, { type: 'ability-fired', ...ev });
   }
   broadcastMatch(match, {
     type: 'turn-end',
     state: snapshotState(match),
-    turn: match.turn
+    turn: match.turn,
+    zones: serializeActiveZones(match)
   });
+  // If auto-clash fired, immediately broadcast clash-start so both clients
+  // jump into the QTE overlay. The aims handler is gated on match.clash so
+  // neither side can lock in until the clash resolves.
+  if (autoClashStarted && match.clash && !match.clash.resolved){
+    broadcastMatch(match, { type: 'clash-start', ctx: match.clash.ctx });
+  }
 }
 
-// ── Phase 3a: Ability evaluator ────────────────────────────────────────────
+// ── Phase 3a/3b: Ability evaluator ─────────────────────────────────────────
 function decrementCooldowns(match){
   if (!match.cooldowns) return;
   for (const pid of Object.keys(match.cooldowns)){
@@ -581,26 +579,81 @@ function ensureStatMods(match, pid){
   if (!match.statMods[pid]) match.statMods[pid] = { speed: 0, shooting: 0, stamina: 0 };
   return match.statMods[pid];
 }
-function evalRequirementsMet(match, pid, requirements){
-  if (!Array.isArray(requirements) || requirements.length === 0) return true;
+
+// ── Phase 3b: zone helpers ─────────────────────────────────────────────────
+function zoneCenter(match, ownerId, zone){
+  const p = match.players[ownerId];
+  if (!p) return null;
+  return { x: p.x + ((zone.offsetX | 0) || 0), y: p.y + ((zone.offsetY | 0) || 0) };
+}
+function isInZone(pos, zone, center){
+  if (!pos || !center) return false;
+  const dx = pos.x - center.x;
+  const dy = pos.y - center.y;
+  return hypot(dx, dy) <= ((zone.radius | 0) || 0);
+}
+// Returns the id of the first matching target in the zone, or null. Used by
+// both requirement evaluation and the auto-clash reward.
+function zoneTargetPresent(match, ownerId, zone){
+  const center = zoneCenter(match, ownerId, zone);
+  if (!center) return null;
+  const ownerTeam = SLOT_TO_TEAM[ownerId];
+  const target = zone.target || 'enemy';
+  if (target === 'ball'){
+    return isInZone(match.ball, zone, center) ? 'ball' : null;
+  }
+  if (target === 'enemy-with-ball'){
+    const h = match.ballHolder;
+    if (!h) return null;
+    if (SLOT_TO_TEAM[h] === ownerTeam) return null;
+    if (isInZone(match.players[h], zone, center)) return h;
+    return null;
+  }
+  if (target === 'self'){
+    return isInZone(match.players[ownerId], zone, center) ? ownerId : null;
+  }
+  // teammate or enemy
+  for (const id in match.players){
+    if (id === ownerId && target !== 'self') continue;
+    const sameTeam = SLOT_TO_TEAM[id] === ownerTeam;
+    if (target === 'teammate' && !sameTeam) continue;
+    if (target === 'enemy'    &&  sameTeam) continue;
+    if (isInZone(match.players[id], zone, center)) return id;
+  }
+  return null;
+}
+function findZone(cfg, zoneId){
+  const zones = (cfg && Array.isArray(cfg.zones)) ? cfg.zones : [];
+  return zones.find(z => z && z.id === zoneId) || null;
+}
+
+function evalRequirementsMet(match, pid, cfg){
+  const requirements = (cfg && Array.isArray(cfg.requirements)) ? cfg.requirements : [];
+  if (requirements.length === 0) return true;
   for (const req of requirements){
     if (!req || !req.kind) continue;
     if (req.kind === 'clash-and-win'){
       if (!match.clashWinsThisTurn || !match.clashWinsThisTurn.has(pid)) return false;
     } else if (req.kind === 'zone'){
-      // Zone-based requirements ship in Phase 3b. Treat as unmet for now so
-      // abilities that need zones simply don't fire yet.
-      return false;
+      const zone = findZone(cfg, req.zoneId);
+      if (!zone) return false;
+      // Player-placed zones land in Phase 3c — until then treat as unmet.
+      if (zone.placement === 'player-placed') return false;
+      if (!zoneTargetPresent(match, pid, zone)) return false;
     } else {
-      // Unknown requirement kind — be conservative: not met.
       return false;
     }
   }
   return true;
 }
+
 function fireRewards(match, pid, ability, fired){
-  const rewards = (ability.config && Array.isArray(ability.config.rewards)) ? ability.config.rewards : [];
+  const cfg = ability.config || {};
+  const rewards = Array.isArray(cfg.rewards) ? cfg.rewards : [];
   const applied = [];
+  // At most one auto-clash per evaluation pass — we set match.clash exactly
+  // once. If an ability has multiple auto-clash rewards, the first wins.
+  let pendingClash = null;
   for (const r of rewards){
     if (!r || !r.kind) continue;
     if (r.kind === 'stat-boost'){
@@ -609,7 +662,6 @@ function fireRewards(match, pid, ability, fired){
       ensureStatMods(match, pid)[stat] += amt;
       applied.push({ kind: 'stat-boost', stat, amount: amt });
     } else if (r.kind === 'give-ball'){
-      // Snap the ball to this player. Clears any loose-ball state.
       const p = match.players[pid];
       if (p){
         match.ballHolder = pid;
@@ -626,13 +678,43 @@ function fireRewards(match, pid, ability, fired){
         p.y = match.ball.y;
         applied.push({ kind: 'teleport-to-ball' });
       }
-    } else if (r.kind === 'teleport-to-zone' || r.kind === 'auto-clash'){
-      // Zone-dependent rewards land in Phase 3b. Tag them as deferred.
-      applied.push({ kind: r.kind, deferred: true });
+    } else if (r.kind === 'teleport-to-zone'){
+      const zone = findZone(cfg, r.zoneId);
+      if (!zone) continue;
+      if (zone.placement === 'player-placed') continue; // 3c
+      const owner = match.players[pid];
+      if (!owner) continue;
+      const center = zoneCenter(match, pid, zone);
+      if (!center) continue;
+      // Clamp to playable field bounds so we never teleport into the wall.
+      owner.x = Math.max(F_LEFT + PLAYER_R, Math.min(F_RIGHT - PLAYER_R, center.x));
+      owner.y = Math.max(F_TOP  + PLAYER_R, Math.min(F_BOT   - PLAYER_R, center.y));
+      // If this player is holding the ball, the ball moves too.
+      if (match.ballHolder === pid){
+        match.ball.x = owner.x + match.ballOffset.x;
+        match.ball.y = owner.y + match.ballOffset.y;
+      }
+      applied.push({ kind: 'teleport-to-zone', zoneId: r.zoneId, x: round1(owner.x), y: round1(owner.y) });
+    } else if (r.kind === 'auto-clash'){
+      if (match.clash || pendingClash) continue; // never stack clashes
+      const zone = findZone(cfg, r.zoneId);
+      if (!zone) continue;
+      if (zone.placement === 'player-placed') continue;
+      const targetId = zoneTargetPresent(match, pid, zone);
+      // Only enemies trigger auto-clash; ball/teammate/self targets skip.
+      if (!targetId || targetId === 'ball') continue;
+      if (SLOT_TO_TEAM[targetId] === SLOT_TO_TEAM[pid]) continue;
+      pendingClash = { moverId: pid, opponentId: targetId, zoneId: r.zoneId };
     }
   }
+  if (pendingClash){
+    match.clash = {
+      ctx: { moverId: pendingClash.moverId, opponentId: pendingClash.opponentId },
+      scoresA: [], scoresB: [], resolved: null
+    };
+    applied.push({ kind: 'auto-clash', zoneId: pendingClash.zoneId, targetId: pendingClash.opponentId });
+  }
   if (applied.length > 0){
-    const cfg = ability.config || {};
     fired.push({
       playerId: pid,
       abilityId: ability.id,
@@ -644,14 +726,13 @@ function fireRewards(match, pid, ability, fired){
   }
   return applied.length > 0;
 }
+
 function evaluateAbilities(match){
   const fired = [];
-  if (!match.abilitiesById) return fired;
+  if (!match.abilitiesById) return { fired, autoClashStarted: false };
   for (const pid of Object.keys(match.players)){
     const player = match.players[pid];
     if (!player || !Array.isArray(player.weapons)) continue;
-    // Reset stat mods from any prior turn's reward at the start of evaluation.
-    // (Mods only buff the immediately-following turn animation.)
     if (match.statMods[pid]){
       match.statMods[pid].speed    = 0;
       match.statMods[pid].shooting = 0;
@@ -662,18 +743,52 @@ function evaluateAbilities(match){
       const ability = match.abilitiesById[abId];
       if (!ability) continue;
       if (getCooldown(match, pid, abId) > 0) continue;
-
-      // On-ball vs off-ball gating: scope says when the ability is eligible.
       const cfg = ability.config || {};
       if (cfg.scope === 'on-ball'  && match.ballHolder !== pid) continue;
       if (cfg.scope === 'off-ball' && match.ballHolder === pid) continue;
-
-      if (!evalRequirementsMet(match, pid, cfg.requirements)) continue;
+      if (!evalRequirementsMet(match, pid, cfg)) continue;
+      const hadClashBefore = !!match.clash;
       if (!fireRewards(match, pid, ability, fired)) continue;
       setCooldown(match, pid, abId, cfg.cooldownTurns | 0);
+      // If we just started an auto-clash, stop evaluating further abilities
+      // this turn — the clash takes over the match.
+      if (!hadClashBefore && match.clash){
+        return { fired, autoClashStarted: true };
+      }
     }
   }
-  return fired;
+  return { fired, autoClashStarted: false };
+}
+
+// ── Phase 3b: zone serialization for client rendering ──────────────────────
+function serializeActiveZones(match){
+  const out = [];
+  if (!match.abilitiesById) return out;
+  for (const pid of Object.keys(match.players)){
+    const player = match.players[pid];
+    if (!player || !Array.isArray(player.weapons)) continue;
+    for (const abId of player.weapons){
+      if (!abId) continue;
+      const ability = match.abilitiesById[abId];
+      if (!ability) continue;
+      const cfg = ability.config || {};
+      const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
+      for (const z of zones){
+        if (!z || !z.id) continue;
+        if (z.placement === 'player-placed') continue;
+        out.push({
+          ownerId:   pid,
+          abilityId: abId,
+          zoneId:    z.id,
+          cx:        round1(player.x + ((z.offsetX | 0) || 0)),
+          cy:        round1(player.y + ((z.offsetY | 0) || 0)),
+          radius:    (z.radius | 0) || 0,
+          color:     z.color || '#ef2b3a'
+        });
+      }
+    }
+  }
+  return out;
 }
 
 function handleGoalServer(match, side){
@@ -982,6 +1097,10 @@ function handleMessage(ws, msg){
       if (!c || !c.matchId) break;
       const match = matches.get(c.matchId);
       if (!match || match.animating) break;
+      // A pending clash (from either a collision or an auto-clash reward)
+      // blocks lock-in. The aims arriving here would never be acted on
+      // anyway since tickMatch bails while clash is active.
+      if (match.clash && !match.clash.resolved) break;
       const slot = c.username === match.playerA.username ? 'aimsA' : 'aimsB';
       match[slot] = { aims: msg.aims || {}, ballAim: msg.ballAim || null, mode: msg.mode || 'kick' };
       // Tell the other side

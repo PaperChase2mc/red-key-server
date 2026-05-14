@@ -625,6 +625,190 @@ async function testAbilityCooldown(){
   a.close(); b.close();
 }
 
+async function testZoneReqMetFires(){
+  // p10 (us striker) starts at (270, 540). p5 (them striker) starts at (270, 260).
+  // A zone offset (0, -280) from p10 puts its center at (270, 260) = where p5 is.
+  // The ability should fire because the zone-condition "enemy in zone" is met.
+  const a = new TestClient(uniq('zr-a'));
+  const b = new TestClient(uniq('zr-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_zone_req_test';
+  const zoneId = 'z_enemy_top';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Spotter', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: {
+        scope: 'off-ball', cooldownTurns: 5,
+        zones: [{
+          id: zoneId, label: 'Front', placement: 'fixed-offset',
+          offsetX: 0, offsetY: -280, radius: 40,
+          color: '#ef2b3a', target: 'enemy'
+        }],
+        requirements: [{ kind: 'zone', zoneId }],
+        rewards: [{ kind: 'stat-boost', stat: 'speed', amount: 1 }]
+      }
+    }
+  };
+  const equipped = [
+    { name: 'Tester', num: 9, stats: { speed: 2, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  // Verify match-start carries the zone.
+  if (!Array.isArray(matchA.zones) || matchA.zones.length === 0){
+    throw new Error('match-start should include the zone for client rendering');
+  }
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  // p5 sits exactly at the zone center → req met, ability fires.
+  await a.expect('ability-fired', 8000);
+  a.close(); b.close();
+}
+
+async function testZoneReqUnmetSkips(){
+  // Same as above but radius is tiny — p5 is outside the zone.
+  const a = new TestClient(uniq('zu-a'));
+  const b = new TestClient(uniq('zu-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_zone_unmet';
+  const zoneId = 'z_tiny';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Unmet', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: {
+        scope: 'off-ball', cooldownTurns: 5,
+        // Offset placed where no enemy is, radius 5.
+        zones: [{ id: zoneId, label: 'Empty', placement: 'fixed-offset',
+                  offsetX: 0, offsetY: -100, radius: 5,
+                  color: '#ef2b3a', target: 'enemy' }],
+        requirements: [{ kind: 'zone', zoneId }],
+        rewards: [{ kind: 'stat-boost', stat: 'speed', amount: 1 }]
+      }
+    }
+  };
+  const equipped = [
+    { name: 'Tester', num: 9, stats: { speed: 2, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  await a.expect('turn-end', 8000);
+  // Nothing should have fired — req was unmet.
+  await a.expectQuiet('ability-fired', 200);
+  a.close(); b.close();
+}
+
+async function testTeleportToZoneMovesPlayer(){
+  // No-requirements ability, single reward: teleport p10 by (+30, -120).
+  const a = new TestClient(uniq('tp-a'));
+  const b = new TestClient(uniq('tp-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_tp_test';
+  const zoneId = 'z_dest';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Blink', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: {
+        scope: 'off-ball', cooldownTurns: 5,
+        zones: [{ id: zoneId, label: 'Dest', placement: 'fixed-offset',
+                  offsetX: 30, offsetY: -120, radius: 20,
+                  color: '#fbbf24', target: 'self' }],
+        requirements: [],
+        rewards: [{ kind: 'teleport-to-zone', zoneId }]
+      }
+    }
+  };
+  const equipped = [
+    { name: 'Blinker', num: 7, stats: { speed: 3, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  const fired = await a.expect('ability-fired', 8000);
+  const tp = fired.rewards.find(r => r.kind === 'teleport-to-zone');
+  if (!tp) throw new Error('expected teleport-to-zone in fired rewards');
+  // p10 starts at (270, 540); teleport offsets are (+30, -120) → (300, 420).
+  if (Math.abs(tp.x - 300) > 1 || Math.abs(tp.y - 420) > 1){
+    throw new Error(`expected teleport to ~(300,420), got (${tp.x},${tp.y})`);
+  }
+  a.close(); b.close();
+}
+
+async function testAutoClashStartsClash(){
+  // Same zone setup as testZoneReqMetFires (zone over p5), but the reward is
+  // auto-clash. After turn-end both sides should receive ability-fired AND
+  // a clash-start broadcast with moverId=p10, opponentId=p5.
+  const a = new TestClient(uniq('ac-a'));
+  const b = new TestClient(uniq('ac-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_autoclash_test';
+  const zoneId = 'z_enemy_top';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Tackle', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: {
+        scope: 'off-ball', cooldownTurns: 5,
+        zones: [{ id: zoneId, label: 'Front', placement: 'fixed-offset',
+                  offsetX: 0, offsetY: -280, radius: 40,
+                  color: '#ef2b3a', target: 'enemy' }],
+        requirements: [],
+        rewards: [{ kind: 'auto-clash', zoneId }]
+      }
+    }
+  };
+  const equipped = [
+    { name: 'Tackler', num: 11, stats: { speed: 3, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  // Both should see ability-fired carrying an auto-clash reward AND a
+  // clash-start broadcast naming the same two players.
+  const fired = await a.expect('ability-fired', 8000);
+  const ac = fired.rewards.find(r => r.kind === 'auto-clash');
+  if (!ac) throw new Error('expected auto-clash reward in fired event');
+  const cs = await a.expect('clash-start', 5000);
+  if (cs.ctx.moverId !== 'p10' || cs.ctx.opponentId !== 'p5'){
+    throw new Error(`clash ctx mismatch: ${JSON.stringify(cs.ctx)}`);
+  }
+  a.close(); b.close();
+}
+
 async function testAimsWithoutMatch(){
   // Send aims when not in a match — server should not crash, no broadcast.
   const a = new TestClient(uniq('noom'));
@@ -661,7 +845,11 @@ const SCENARIOS = [
   ['invite: accept creates no-keys match',            testInviteFlowNoKeys],
   ['aims without match: no crash',                    testAimsWithoutMatch],
   ['ability: no-reqs ability fires + broadcasts',     testAbilityFiresNoReqs],
-  ['ability: cooldown prevents immediate re-fire',    testAbilityCooldown]
+  ['ability: cooldown prevents immediate re-fire',    testAbilityCooldown],
+  ['ability: zone-req met (enemy in zone) fires',     testZoneReqMetFires],
+  ['ability: zone-req unmet (radius too small) skips',testZoneReqUnmetSkips],
+  ['ability: teleport-to-zone moves the player',      testTeleportToZoneMovesPlayer],
+  ['ability: auto-clash spawns clash-start broadcast',testAutoClashStartsClash]
 ];
 
 async function main(){

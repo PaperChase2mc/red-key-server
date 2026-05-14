@@ -18,6 +18,8 @@ All notable changes to Red Key. Most recent first.
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
 ### Added
+- Phase 3b of the Skill Builder: zone-based abilities now work in matches. Requirements like "enemy in zone" or "ball in zone" check actual positions at the end of every turn. Teleport-to-Zone moves the player to the zone's center. Auto-Clash forces an immediate clash with the enemy in the zone — the QTE overlay pops up and lock-in is blocked until it resolves.
+- Active zones render on the pitch as translucent dashed circles in their configured colors. They appear above the field paint and under the players, so they never block clicks.
 - Phase 4 of the Skill Builder: per-ability sound effects and cutscenes. The Skill Builder has a new "Media" section to upload one MP3 (max 5 MB) and one MP4 (max 25 MB). When the ability fires, the MP3 plays inline and the MP4 takes over the entire screen with a fade in/out before returning to the match.
 - Phase 3a of the Skill Builder: equipped abilities now actually do something during a match. The server evaluates each player's abilities at the end of every turn and fires their rewards when requirements are met. Working in this round: "no requirements" (fires every cooldown) and "Clash and Win" requirement; Stat Boost, Give Ball, and Teleport-to-Ball rewards; per-player per-ability cooldowns; on-ball vs off-ball gating. A toast and a gold flash appear when an ability fires.
 - Zone-based requirements and rewards (Teleport-to-Zone, Auto-Clash) are recognized but won't fire yet — those land in Phase 3b along with zone visualization on the pitch.

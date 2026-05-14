@@ -1634,6 +1634,9 @@
             stroke="#fde047" stroke-width="3" stroke-linecap="round"
             opacity="0" pointer-events="none"/>
 
+      <!-- Phase 3b: ability requirement-zones layer (under players). -->
+      <g id="zones-layer" pointer-events="none"></g>
+
       <!-- Players -->
       <g id="p4-g" class="player" data-id="p4" transform="translate(130, 220)">
         <circle r="26" fill="#ffffff" opacity="0.0"/>
@@ -5130,6 +5133,35 @@
   }
   function clearMatchRoster(){
     if (matchRosterEl) matchRosterEl.classList.remove('on');
+    clearZones();
+  }
+
+  // ── Phase 3b: zone rendering ─────────────────────────────────────────
+  // The server sends a list of active zones in match-start and turn-end.
+  // We mirror them as translucent colored circles under the player layer.
+  const zonesLayerEl = document.getElementById('zones-layer');
+  function renderZones(zones){
+    if (!zonesLayerEl) return;
+    while (zonesLayerEl.firstChild) zonesLayerEl.removeChild(zonesLayerEl.firstChild);
+    if (!Array.isArray(zones)) return;
+    const svgNS = 'http://www.w3.org/2000/svg';
+    for (const z of zones){
+      if (!z) continue;
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', z.cx);
+      c.setAttribute('cy', z.cy);
+      c.setAttribute('r',  z.radius);
+      c.setAttribute('fill', z.color || '#ef2b3a');
+      c.setAttribute('fill-opacity', '0.10');
+      c.setAttribute('stroke', z.color || '#ef2b3a');
+      c.setAttribute('stroke-opacity', '0.55');
+      c.setAttribute('stroke-width', '1.5');
+      c.setAttribute('stroke-dasharray', '4 3');
+      zonesLayerEl.appendChild(c);
+    }
+  }
+  function clearZones(){
+    if (zonesLayerEl) while (zonesLayerEl.firstChild) zonesLayerEl.removeChild(zonesLayerEl.firstChild);
   }
 
   // ── Ability-fired flash banner + media playback ─────────────────────
@@ -5361,6 +5393,7 @@
         refreshModeUI();
         refreshPossessionUI();
         refreshRosterUI();
+        renderZones(msg.zones);
         if (typeof startTurnTimer === 'function') startTurnTimer();
         break;
       }
@@ -5869,6 +5902,7 @@
     refreshArrows();
     refreshModeUI();
     setRosterFromMatchStart(msg);
+    renderZones(msg.zones);
     mpOverlay.classList.remove('on');
     hideMainMenu();
     startMatchHeartbeat();
