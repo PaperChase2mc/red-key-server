@@ -632,7 +632,15 @@ function fireRewards(match, pid, ability, fired){
     }
   }
   if (applied.length > 0){
-    fired.push({ playerId: pid, abilityId: ability.id, abilityName: ability.name, rewards: applied });
+    const cfg = ability.config || {};
+    fired.push({
+      playerId: pid,
+      abilityId: ability.id,
+      abilityName: ability.name,
+      rewards: applied,
+      soundUrl:    cfg.soundUrl    || null,
+      cutsceneUrl: cfg.cutsceneUrl || null
+    });
   }
   return applied.length > 0;
 }

@@ -368,6 +368,24 @@
   .pitch *{user-select:none}
   .player.movable{cursor:grab}
   .player.movable:active{cursor:grabbing}
+  /* Phase 4: full-screen cutscene overlay for MP4 playback on ability fire. */
+  .cutscene-overlay{
+    position: fixed; inset: 0;
+    background: #000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 320ms ease-in-out;
+  }
+  .cutscene-overlay.on{ display: flex; opacity: 1 }
+  .cutscene-video{
+    width: 100vw; height: 100vh;
+    object-fit: contain;
+    background: #000;
+  }
+
   /* Phase 3a: brief flash when an ability fires on this player. */
   @keyframes abilityFlash{
     0%   { filter: drop-shadow(0 0 0 transparent); }
@@ -2098,6 +2116,11 @@
   </div>
 </div>
 
+<!-- Phase 4: cutscene overlay (full screen video on ability fire) -->
+<div class="cutscene-overlay" id="cutscene-overlay">
+  <video class="cutscene-video" id="cutscene-video" playsinline preload="auto"></video>
+</div>
+
 <!-- Maintenance gate (shown to non-admins when an admin flips the kill switch) -->
 <div class="full-overlay" id="maintenance-overlay" role="dialog" aria-modal="true" aria-label="Maintenance">
   <div class="overlay-card">
@@ -2193,6 +2216,35 @@
       </div>
       <div id="sb-rewards-list" class="sb-section-list"></div>
       <button id="sb-add-reward" class="sb-add-btn" type="button">+ Add Reward</button>
+    </div>
+
+    <div class="admin-section">
+      <h3>Media</h3>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.16em;color:var(--ink-dimmer);margin-bottom:8px;text-transform:uppercase">
+        Optional. Sound plays inline when the ability fires. Cutscene takes over the screen and pauses the game until it finishes.
+      </div>
+
+      <div class="sb-row" style="display:block">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.18em;color:var(--ink-dimmer);text-transform:uppercase;margin-bottom:6px">Sound (MP3, max 5MB)</div>
+        <input type="file" id="sb-sound-file" accept="audio/mpeg,audio/mp3" />
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <button class="primary-btn" id="sb-sound-upload" type="button">Upload</button>
+          <button class="ghost-btn"   id="sb-sound-clear" type="button">Clear</button>
+          <audio id="sb-sound-preview" controls style="height:30px;display:none"></audio>
+        </div>
+        <div class="auth-error" id="sb-sound-msg" style="margin-top:6px"></div>
+      </div>
+
+      <div class="sb-row" style="display:block;margin-top:10px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.18em;color:var(--ink-dimmer);text-transform:uppercase;margin-bottom:6px">Cutscene (MP4, max 25MB)</div>
+        <input type="file" id="sb-cutscene-file" accept="video/mp4" />
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <button class="primary-btn" id="sb-cutscene-upload" type="button">Upload</button>
+          <button class="ghost-btn"   id="sb-cutscene-clear" type="button">Clear</button>
+        </div>
+        <video id="sb-cutscene-preview" controls style="max-width:100%;max-height:160px;display:none;margin-top:6px"></video>
+        <div class="auth-error" id="sb-cutscene-msg" style="margin-top:6px"></div>
+      </div>
     </div>
 
     <div class="admin-section" style="background:transparent;border:none;padding:0">
@@ -5080,9 +5132,57 @@
     if (matchRosterEl) matchRosterEl.classList.remove('on');
   }
 
-  // ── Ability-fired flash banner ──────────────────────────────────────
+  // ── Ability-fired flash banner + media playback ─────────────────────
   // Phase 3a: a small toast appears for ~1.6s describing what fired.
+  // Phase 4: optional MP3 plays inline; optional MP4 cutscene takes over
+  // the screen with a black fade in/out.
   let abilityFlashTimer = null;
+  const cutsceneOverlayEl = document.getElementById('cutscene-overlay');
+  const cutsceneVideoEl   = document.getElementById('cutscene-video');
+  let cutscenePlaying = false;
+  function playAbilitySound(url){
+    if (!url) return;
+    try {
+      const audio = new Audio(url);
+      audio.volume = 0.85;
+      // Browsers block autoplay without user interaction. Once the user
+      // has tapped Lock In once, future plays are allowed; if the very
+      // first ability fires before any input, the catch swallows quietly.
+      audio.play().catch(() => {});
+    } catch(_){}
+  }
+  function playAbilityCutscene(url){
+    if (!url || !cutsceneOverlayEl || !cutsceneVideoEl) return Promise.resolve();
+    if (cutscenePlaying) return Promise.resolve(); // already playing one
+    cutscenePlaying = true;
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        cutsceneOverlayEl.classList.remove('on');
+        // Wait for fade-out before fully hiding + clearing src.
+        setTimeout(() => {
+          cutsceneOverlayEl.style.display = 'none';
+          try { cutsceneVideoEl.pause(); } catch(_){}
+          cutsceneVideoEl.removeAttribute('src');
+          try { cutsceneVideoEl.load(); } catch(_){}
+          cutscenePlaying = false;
+          resolve();
+        }, 340);
+      };
+      cutsceneVideoEl.onended = finish;
+      cutsceneVideoEl.onerror = finish;
+      cutsceneVideoEl.src = url;
+      cutsceneOverlayEl.style.display = 'flex';
+      // Force reflow so the transition runs.
+      void cutsceneOverlayEl.offsetWidth;
+      cutsceneOverlayEl.classList.add('on');
+      cutsceneVideoEl.play().catch(finish);
+      // Safety net: if neither `ended` nor `error` fires within 30s, give up.
+      setTimeout(finish, 30000);
+    });
+  }
   function flashAbilityFired(msg){
     if (!msg) return;
     const playerId = msg.playerId;
@@ -5099,7 +5199,6 @@
     });
     const summary = parts.length ? ' · ' + parts.join(', ') : '';
     if (hint) hint.textContent = `Ability: ${who} fired "${msg.abilityName}"${summary}`;
-    // Briefly highlight the affected player tile if we can find one.
     if (player && player.el){
       try {
         player.el.classList.add('ability-flash');
@@ -5110,6 +5209,9 @@
         }, 1600);
       } catch(_){}
     }
+    // Sound first (non-blocking), then cutscene (blocking until done).
+    if (msg.soundUrl)    playAbilitySound(msg.soundUrl);
+    if (msg.cutsceneUrl) playAbilityCutscene(msg.cutsceneUrl);
   }
 
   // ── Match-end popup ──────────────────────────────────────────
@@ -5896,7 +5998,9 @@
       cooldownTurns: 0,
       zones: [],
       requirements: [],
-      rewards: []
+      rewards: [],
+      soundUrl: null,
+      cutsceneUrl: null
     };
   }
   let currentSkillConfig = defaultSkillConfig();
@@ -6184,6 +6288,98 @@
     renderZonesList();
     renderRequirementsList();
     renderRewardsList();
+    refreshMediaPreviews();
+  }
+
+  // ── Media uploads (Phase 4) ────────────────────────────────────────
+  const SOUND_MAX_BYTES    =  5 * 1024 * 1024;  // 5 MB
+  const CUTSCENE_MAX_BYTES = 25 * 1024 * 1024;  // 25 MB
+  const sbSoundFile     = document.getElementById('sb-sound-file');
+  const sbSoundUpload   = document.getElementById('sb-sound-upload');
+  const sbSoundClear    = document.getElementById('sb-sound-clear');
+  const sbSoundMsg      = document.getElementById('sb-sound-msg');
+  const sbSoundPreview  = document.getElementById('sb-sound-preview');
+  const sbCutsceneFile  = document.getElementById('sb-cutscene-file');
+  const sbCutsceneUpload= document.getElementById('sb-cutscene-upload');
+  const sbCutsceneClear = document.getElementById('sb-cutscene-clear');
+  const sbCutsceneMsg   = document.getElementById('sb-cutscene-msg');
+  const sbCutscenePrev  = document.getElementById('sb-cutscene-preview');
+
+  function refreshMediaPreviews(){
+    if (currentSkillConfig.soundUrl){
+      sbSoundPreview.src = currentSkillConfig.soundUrl;
+      sbSoundPreview.style.display = '';
+    } else {
+      sbSoundPreview.removeAttribute('src');
+      sbSoundPreview.style.display = 'none';
+    }
+    if (currentSkillConfig.cutsceneUrl){
+      sbCutscenePrev.src = currentSkillConfig.cutsceneUrl;
+      sbCutscenePrev.style.display = '';
+    } else {
+      sbCutscenePrev.removeAttribute('src');
+      sbCutscenePrev.style.display = 'none';
+    }
+  }
+  async function uploadMediaFile(file, kind /* 'sound' | 'cutscene' */){
+    const ext = kind === 'sound' ? 'mp3' : 'mp4';
+    // path: kind/<ability-id-or-random>-<timestamp>.<ext>
+    const idPart = (currentSkillConfig._localId
+      || sbIdEl.value
+      || newLocalId('temp')).replace(/[^a-zA-Z0-9_-]/g, '');
+    const path = `${kind}/${idPart}-${Date.now()}.${ext}`;
+    const { error } = await sb.storage.from('ability-media').upload(path, file, {
+      contentType: file.type, upsert: false
+    });
+    if (error) throw new Error(error.message || 'Upload failed.');
+    const { data } = sb.storage.from('ability-media').getPublicUrl(path);
+    return data && data.publicUrl;
+  }
+  if (sbSoundUpload){
+    sbSoundUpload.addEventListener('click', async () => {
+      const f = sbSoundFile.files && sbSoundFile.files[0];
+      if (!f){ sbSoundMsg.textContent = 'Pick an MP3 first.'; return; }
+      if (f.size > SOUND_MAX_BYTES){ sbSoundMsg.textContent = `Too large (max ${(SOUND_MAX_BYTES/1024/1024)|0} MB).`; return; }
+      sbSoundMsg.textContent = 'Uploading…';
+      try {
+        const url = await uploadMediaFile(f, 'sound');
+        currentSkillConfig.soundUrl = url;
+        refreshMediaPreviews();
+        sbSoundMsg.textContent = 'Uploaded. Save the ability to persist.';
+        sbSoundFile.value = '';
+      } catch (e){ sbSoundMsg.textContent = (e && e.message) || 'Upload failed.'; }
+    });
+  }
+  if (sbSoundClear){
+    sbSoundClear.addEventListener('click', () => {
+      currentSkillConfig.soundUrl = null;
+      refreshMediaPreviews();
+      sbSoundMsg.textContent = 'Cleared. Save the ability to persist.';
+      sbSoundFile.value = '';
+    });
+  }
+  if (sbCutsceneUpload){
+    sbCutsceneUpload.addEventListener('click', async () => {
+      const f = sbCutsceneFile.files && sbCutsceneFile.files[0];
+      if (!f){ sbCutsceneMsg.textContent = 'Pick an MP4 first.'; return; }
+      if (f.size > CUTSCENE_MAX_BYTES){ sbCutsceneMsg.textContent = `Too large (max ${(CUTSCENE_MAX_BYTES/1024/1024)|0} MB).`; return; }
+      sbCutsceneMsg.textContent = 'Uploading…';
+      try {
+        const url = await uploadMediaFile(f, 'cutscene');
+        currentSkillConfig.cutsceneUrl = url;
+        refreshMediaPreviews();
+        sbCutsceneMsg.textContent = 'Uploaded. Save the ability to persist.';
+        sbCutsceneFile.value = '';
+      } catch (e){ sbCutsceneMsg.textContent = (e && e.message) || 'Upload failed.'; }
+    });
+  }
+  if (sbCutsceneClear){
+    sbCutsceneClear.addEventListener('click', () => {
+      currentSkillConfig.cutsceneUrl = null;
+      refreshMediaPreviews();
+      sbCutsceneMsg.textContent = 'Cleared. Save the ability to persist.';
+      sbCutsceneFile.value = '';
+    });
   }
 
   function clearSkillForm(){
@@ -6213,6 +6409,8 @@
     currentSkillConfig.zones        = currentSkillConfig.zones        || [];
     currentSkillConfig.requirements = currentSkillConfig.requirements || [];
     currentSkillConfig.rewards      = currentSkillConfig.rewards      || [];
+    if (typeof currentSkillConfig.soundUrl    === 'undefined') currentSkillConfig.soundUrl    = null;
+    if (typeof currentSkillConfig.cutsceneUrl === 'undefined') currentSkillConfig.cutsceneUrl = null;
     renderConfigSections();
   }
   function renderSkillList(){
