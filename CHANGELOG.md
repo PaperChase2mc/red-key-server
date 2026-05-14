@@ -17,6 +17,9 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Changed
+- The "Attack" and "Defend" labels now sit above and below the field instead of floating over the goal areas. They no longer block players or the ball near the goals.
+
 ### Added
 - Server-side test harness (`npm test`) that spawns the game server, opens two WebSocket clients, and walks them through 17 multiplayer scenarios end-to-end. Catches regressions in the protocol before they reach a real match.
 

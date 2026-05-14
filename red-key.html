@@ -353,14 +353,16 @@
   .field-card::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
   .field-card::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
   .field-tag{
-    position:absolute;top: 14px; left: 50%; transform: translateX(-50%);
+    display: block;
+    margin: 0 auto 8px;
+    width: fit-content;
     font-family:"JetBrains Mono", monospace;
     font-size: 9px;text-transform: uppercase;letter-spacing: 0.26em;
-    color: var(--ink-dimmer);background: var(--surface);
-    padding: 3px 12px;z-index: 3;pointer-events: none;
+    color: var(--ink-dimmer);background: var(--surface-2);
+    padding: 3px 12px;pointer-events: none;
     border: 1px solid var(--line);
   }
-  .field-tag.bottom{top: auto; bottom: 14px}
+  .field-tag.bottom{margin: 8px auto 0}
   .field-tag .arrow{color: var(--red); margin-left: 4px}
   .pitch{display:block;width:100%;height:auto;touch-action:none;user-select:none}
   .pitch *{user-select:none}
@@ -1551,7 +1553,6 @@
 
   <section class="field-card" aria-label="Field of play">
     <span class="field-tag">Attack <span class="arrow">↑</span></span>
-    <span class="field-tag bottom">Defend <span class="arrow">↓</span></span>
 
     <svg class="pitch" viewBox="0 0 540 800" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
@@ -1713,6 +1714,7 @@
               letter-spacing="6">GOAL</text>
       </g>
     </svg>
+    <span class="field-tag bottom">Defend <span class="arrow">↓</span></span>
   </section>
 
   <section class="controls" aria-label="Action controls">
