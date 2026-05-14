@@ -368,6 +368,13 @@
   .pitch *{user-select:none}
   .player.movable{cursor:grab}
   .player.movable:active{cursor:grabbing}
+  /* Phase 3a: brief flash when an ability fires on this player. */
+  @keyframes abilityFlash{
+    0%   { filter: drop-shadow(0 0 0 transparent); }
+    50%  { filter: drop-shadow(0 0 14px var(--yellow)); }
+    100% { filter: drop-shadow(0 0 0 transparent); }
+  }
+  .player.ability-flash{ animation: abilityFlash 1.6s ease-out }
   .player.knocked-out{filter: grayscale(0.8) brightness(0.45)}
   .ball-g.grabbable{cursor:grab}
   .ball-g.grabbable:active{cursor:grabbing}
@@ -5073,6 +5080,38 @@
     if (matchRosterEl) matchRosterEl.classList.remove('on');
   }
 
+  // ── Ability-fired flash banner ──────────────────────────────────────
+  // Phase 3a: a small toast appears for ~1.6s describing what fired.
+  let abilityFlashTimer = null;
+  function flashAbilityFired(msg){
+    if (!msg) return;
+    const playerId = msg.playerId;
+    const player = players[playerId];
+    const who = player ? `#${player.num}` : (playerId || '?');
+    const rewards = Array.isArray(msg.rewards) ? msg.rewards : [];
+    const parts = rewards.map(r => {
+      if (r.kind === 'stat-boost') return `${r.stat} ${r.amount > 0 ? '+' : ''}${r.amount}`;
+      if (r.kind === 'give-ball')        return 'gives ball';
+      if (r.kind === 'teleport-to-ball') return 'tp-to-ball';
+      if (r.kind === 'teleport-to-zone') return 'tp-to-zone';
+      if (r.kind === 'auto-clash')       return 'auto-clash';
+      return r.kind;
+    });
+    const summary = parts.length ? ' · ' + parts.join(', ') : '';
+    if (hint) hint.textContent = `Ability: ${who} fired "${msg.abilityName}"${summary}`;
+    // Briefly highlight the affected player tile if we can find one.
+    if (player && player.el){
+      try {
+        player.el.classList.add('ability-flash');
+        if (abilityFlashTimer) clearTimeout(abilityFlashTimer);
+        abilityFlashTimer = setTimeout(() => {
+          player.el.classList.remove('ability-flash');
+          abilityFlashTimer = null;
+        }, 1600);
+      } catch(_){}
+    }
+  }
+
   // ── Match-end popup ──────────────────────────────────────────
   const matchEndOverlay = document.getElementById('match-end-overlay');
   const matchEndTitle   = document.getElementById('match-end-title');
@@ -5121,12 +5160,34 @@
   if (matchEndOk) matchEndOk.addEventListener('click', dismissMatchEndPopup);
   function buildHelloPayload(){
     const a = currentAccount();
+    const equipped = getMyEquippedPlayers();
+    // Bundle the full ability configs for any weapon any equipped player
+    // holds. Server uses these to actually fire requirements + rewards
+    // during play. Without this, abilities are just decorative names.
+    const abilities = {};
+    for (const p of equipped){
+      if (!p || !Array.isArray(p.weapons)) continue;
+      for (const abilityId of p.weapons){
+        if (!abilityId || abilities[abilityId]) continue;
+        const ab = db.abilities[abilityId];
+        if (!ab) continue;
+        abilities[abilityId] = {
+          id: ab.id,
+          name: ab.name,
+          trigger: ab.trigger,
+          effect: ab.effect,
+          magnitude: ab.magnitude,
+          config: ab.config || null
+        };
+      }
+    }
     return {
       type: 'hello',
       username: currentUser,
-      equipped: getMyEquippedPlayers(),
+      equipped,
       isAdmin: !!(a && a.isAdmin),
-      tag: a ? effectiveTag(a) : ''
+      tag: a ? effectiveTag(a) : '',
+      abilities
     };
   }
 
@@ -5168,6 +5229,10 @@
       }
       case 'opponent-locked': {
         hint.textContent = `${mpPartner ? mpPartner.username : 'Opponent'} locked in their move.`;
+        break;
+      }
+      case 'ability-fired': {
+        flashAbilityFired(msg);
         break;
       }
       case 'turn-state': {

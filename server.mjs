@@ -145,6 +145,22 @@ function createMatch(wsA, wsB, opts){
     animating: false,
     runtime: null,
     clash: null,                // { ctx, scoresA, scoresB, resolved? }
+
+    // ── Phase 3a: ability execution state ──────────────────────────────
+    // abilitiesById: union of both sides' shared ability configs
+    //   { [abilityId]: { id, name, trigger, effect, magnitude, config } }
+    // cooldowns: per-player per-ability turns remaining
+    //   { [playerId]: { [abilityId]: number } }
+    // statMods: per-player additive stat modifiers consumed each turn
+    //   { [playerId]: { speed: 0, shooting: 0, stamina: 0 } }
+    // clashWinsThisTurn: ids that won a clash since last evaluator pass
+    abilitiesById: {
+      ...(usClient.abilities   || {}),
+      ...(themClient.abilities || {})
+    },
+    cooldowns: {},
+    statMods: {},
+    clashWinsThisTurn: new Set()
   };
 
   // Stamp the six SVG slots with each side's equipped roster
@@ -231,9 +247,17 @@ function snapshotState(match){
 }
 
 // ── Per-player stat factors ────────────────────────────────────────────────
-const speedFactor    = (m, id) => statFactor(m.players[id].stats.speed);
-const staminaFactor  = (m, id) => statFactor(m.players[id].stats.stamina);
-const shootingFactor = (m, id) => statFactor(m.players[id].stats.shooting);
+// Temporary stat mods (from fired ability rewards) stack on top of base stars.
+// The factor is computed on demand, so the next time a turn animates the
+// modded value is what drives speed/shot/stamina.
+function effStat(m, id, key){
+  const base = (m.players[id] && m.players[id].stats && m.players[id].stats[key]) | 0;
+  const mod  = (m.statMods && m.statMods[id] && m.statMods[id][key]) | 0;
+  return base + mod;
+}
+const speedFactor    = (m, id) => statFactor(effStat(m, id, 'speed'));
+const staminaFactor  = (m, id) => statFactor(effStat(m, id, 'stamina'));
+const shootingFactor = (m, id) => statFactor(effStat(m, id, 'shooting'));
 
 // ── Ball physics ───────────────────────────────────────────────────────────
 function buildPickupCandidates(match, excludeId){
@@ -504,14 +528,144 @@ function endTurnServer(match){
   for (const id in match.players){
     if (match.players[id].frozen > 0) match.players[id].frozen -= 1;
   }
+  // Phase 3a: evaluate equipped abilities, fire any whose requirements are
+  // met and whose cooldown has expired. Rewards mutate match state for the
+  // turn we're about to start. Fired events are broadcast as their own
+  // messages so the client can flash UI.
+  const fired = evaluateAbilities(match);
+  // Decrement cooldowns AFTER evaluation so a freshly-fired ability starts
+  // its cooldown at the configured number (not number-1).
+  decrementCooldowns(match);
+  // Stat boosts apply to the upcoming turn only — clear them after this turn
+  // animates. We zero them HERE (before broadcasting turn-end) so the new
+  // snapshot can include the boosted runtime stats for the next planning
+  // phase if we ever expose them; in 3a they only affect speed/shooting/stamina
+  // during the simulation tick, so zeroing right before turn-end is fine.
+  // Actually: hold them through the NEXT animation. We zero in evaluator on
+  // the call AFTER they fired, gated by `_appliedAt`.
+  match.clashWinsThisTurn = new Set();
   match.turn += 1;
   match.animating = false;
   match.runtime = null;
+  // Send each fired ability as its own event for the visual flash.
+  for (const ev of fired){
+    broadcastMatch(match, { type: 'ability-fired', ...ev });
+  }
   broadcastMatch(match, {
     type: 'turn-end',
     state: snapshotState(match),
     turn: match.turn
   });
+}
+
+// ── Phase 3a: Ability evaluator ────────────────────────────────────────────
+function decrementCooldowns(match){
+  if (!match.cooldowns) return;
+  for (const pid of Object.keys(match.cooldowns)){
+    const m = match.cooldowns[pid];
+    for (const abId of Object.keys(m)){
+      m[abId] = Math.max(0, (m[abId] | 0) - 1);
+      if (m[abId] === 0) delete m[abId];
+    }
+    if (Object.keys(m).length === 0) delete match.cooldowns[pid];
+  }
+}
+function getCooldown(match, pid, abId){
+  return (match.cooldowns && match.cooldowns[pid] && match.cooldowns[pid][abId]) | 0;
+}
+function setCooldown(match, pid, abId, turns){
+  if (!match.cooldowns[pid]) match.cooldowns[pid] = {};
+  match.cooldowns[pid][abId] = Math.max(0, turns | 0);
+}
+function ensureStatMods(match, pid){
+  if (!match.statMods[pid]) match.statMods[pid] = { speed: 0, shooting: 0, stamina: 0 };
+  return match.statMods[pid];
+}
+function evalRequirementsMet(match, pid, requirements){
+  if (!Array.isArray(requirements) || requirements.length === 0) return true;
+  for (const req of requirements){
+    if (!req || !req.kind) continue;
+    if (req.kind === 'clash-and-win'){
+      if (!match.clashWinsThisTurn || !match.clashWinsThisTurn.has(pid)) return false;
+    } else if (req.kind === 'zone'){
+      // Zone-based requirements ship in Phase 3b. Treat as unmet for now so
+      // abilities that need zones simply don't fire yet.
+      return false;
+    } else {
+      // Unknown requirement kind — be conservative: not met.
+      return false;
+    }
+  }
+  return true;
+}
+function fireRewards(match, pid, ability, fired){
+  const rewards = (ability.config && Array.isArray(ability.config.rewards)) ? ability.config.rewards : [];
+  const applied = [];
+  for (const r of rewards){
+    if (!r || !r.kind) continue;
+    if (r.kind === 'stat-boost'){
+      const stat = (r.stat === 'speed' || r.stat === 'shooting' || r.stat === 'stamina') ? r.stat : 'speed';
+      const amt  = (r.amount | 0);
+      ensureStatMods(match, pid)[stat] += amt;
+      applied.push({ kind: 'stat-boost', stat, amount: amt });
+    } else if (r.kind === 'give-ball'){
+      // Snap the ball to this player. Clears any loose-ball state.
+      const p = match.players[pid];
+      if (p){
+        match.ballHolder = pid;
+        match.ballOffset = { x: 0, y: BALL_OFFSET_MAG };
+        match.ball.x = p.x + match.ballOffset.x;
+        match.ball.y = p.y + match.ballOffset.y;
+        match.mode = 'kick';
+        applied.push({ kind: 'give-ball' });
+      }
+    } else if (r.kind === 'teleport-to-ball'){
+      const p = match.players[pid];
+      if (p){
+        p.x = match.ball.x;
+        p.y = match.ball.y;
+        applied.push({ kind: 'teleport-to-ball' });
+      }
+    } else if (r.kind === 'teleport-to-zone' || r.kind === 'auto-clash'){
+      // Zone-dependent rewards land in Phase 3b. Tag them as deferred.
+      applied.push({ kind: r.kind, deferred: true });
+    }
+  }
+  if (applied.length > 0){
+    fired.push({ playerId: pid, abilityId: ability.id, abilityName: ability.name, rewards: applied });
+  }
+  return applied.length > 0;
+}
+function evaluateAbilities(match){
+  const fired = [];
+  if (!match.abilitiesById) return fired;
+  for (const pid of Object.keys(match.players)){
+    const player = match.players[pid];
+    if (!player || !Array.isArray(player.weapons)) continue;
+    // Reset stat mods from any prior turn's reward at the start of evaluation.
+    // (Mods only buff the immediately-following turn animation.)
+    if (match.statMods[pid]){
+      match.statMods[pid].speed    = 0;
+      match.statMods[pid].shooting = 0;
+      match.statMods[pid].stamina  = 0;
+    }
+    for (const abId of player.weapons){
+      if (!abId) continue;
+      const ability = match.abilitiesById[abId];
+      if (!ability) continue;
+      if (getCooldown(match, pid, abId) > 0) continue;
+
+      // On-ball vs off-ball gating: scope says when the ability is eligible.
+      const cfg = ability.config || {};
+      if (cfg.scope === 'on-ball'  && match.ballHolder !== pid) continue;
+      if (cfg.scope === 'off-ball' && match.ballHolder === pid) continue;
+
+      if (!evalRequirementsMet(match, pid, cfg.requirements)) continue;
+      if (!fireRewards(match, pid, ability, fired)) continue;
+      setCooldown(match, pid, abId, cfg.cooldownTurns | 0);
+    }
+  }
+  return fired;
 }
 
 function handleGoalServer(match, side){
@@ -605,6 +759,8 @@ function resolveClashServer(match){
   const outcome = { winnerId, loserId, throwAngle, throwDist,
                     totalA, totalB };
   match.clash.resolved = outcome;
+  // Track for ability requirements: who won a clash this turn?
+  if (match.clashWinsThisTurn) match.clashWinsThisTurn.add(winnerId);
   broadcastMatch(match, { type: 'clash-outcome', outcome });
 }
 function handleClashDismiss(ws){
@@ -732,6 +888,10 @@ function handleMessage(ws, msg){
         equipped: msg.equipped || [null,null,null],
         isAdmin: !!msg.isAdmin,
         tag: (typeof msg.tag === 'string' ? msg.tag.slice(0, 24) : '') || '',
+        // Ability configs for any weapon any equipped player holds. Used at
+        // match-create time to populate match.abilitiesById, and re-applied
+        // on roster updates so changes mid-session show up next match.
+        abilities: (msg.abilities && typeof msg.abilities === 'object') ? msg.abilities : {},
         matchId: resumeMatch ? resumeMatch.id : null
       };
       clientsByWs.set(ws, info);
@@ -766,6 +926,7 @@ function handleMessage(ws, msg){
         c.equipped = msg.equipped || c.equipped;
         if (typeof msg.isAdmin === 'boolean') c.isAdmin = msg.isAdmin;
         if (typeof msg.tag === 'string') c.tag = msg.tag.slice(0, 24);
+        if (msg.abilities && typeof msg.abilities === 'object') c.abilities = msg.abilities;
       }
       break;
     }

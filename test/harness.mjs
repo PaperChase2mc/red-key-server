@@ -525,6 +525,106 @@ async function testHeartbeatKeepsConnectionAlive(){
   a.close();
 }
 
+async function testAbilityFiresNoReqs(){
+  // Phase 3a: equip the us-team striker (p10) with a no-requirements
+  // "give-ball" ability. After turn 1 the server should fire it and
+  // broadcast ability-fired to both clients.
+  const a = new TestClient(uniq('ab-a'));
+  const b = new TestClient(uniq('ab-b'));
+  await a.open(); await b.open();
+
+  // Synthetic ability config: no reqs, single give-ball reward, cooldown 5.
+  const abilityId = 'ab_giveball_test';
+  const abilityConfig = {
+    [abilityId]: {
+      id: abilityId,
+      name: 'Magnet Boots',
+      trigger: 'passive',
+      effect: 'speed-boost',
+      magnitude: 0,
+      config: {
+        scope: 'off-ball',  // only fires while not holding the ball
+        cooldownTurns: 5,
+        zones: [],
+        requirements: [],
+        rewards: [{ kind: 'give-ball' }]
+      }
+    }
+  };
+  // Player slot p10 (us striker) gets this weapon.
+  const equippedUs = [
+    { name: 'Tester One', num: 10, stats: { speed: 3, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped: equippedUs,
+           abilities: abilityConfig });
+  b.hello();
+  await a.expect('welcome');
+  await b.expect('welcome');
+  a.send({ type: 'queue' });
+  b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  // a may or may not be playerA depending on alphabetical sort. We need to
+  // know who got the ability slot. The ability is on p10, which is owned
+  // by the 'us' team. We just need to verify ability-fired arrives.
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  // Server fires ability at end of turn 1; both sides should see the event.
+  const firedA = await a.expect('ability-fired', 8000);
+  const firedB = await b.expect('ability-fired', 8000);
+  if (firedA.abilityId !== abilityId) throw new Error(`a: wrong ability id ${firedA.abilityId}`);
+  if (firedB.abilityId !== abilityId) throw new Error(`b: wrong ability id ${firedB.abilityId}`);
+  if (!Array.isArray(firedA.rewards) || !firedA.rewards.some(r => r.kind === 'give-ball')){
+    throw new Error('expected give-ball reward in fired event');
+  }
+  await a.expect('turn-end', 8000);
+  await b.expect('turn-end', 8000);
+  a.close(); b.close();
+}
+
+async function testAbilityCooldown(){
+  // Same setup but cooldown=2. Ability fires once; should NOT fire again
+  // immediately the next turn.
+  const a = new TestClient(uniq('cd-a'));
+  const b = new TestClient(uniq('cd-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_cd_test';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Once-only', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: { scope: 'off-ball', cooldownTurns: 5, zones: [], requirements: [],
+                rewards: [{ kind: 'stat-boost', stat: 'speed', amount: 1 }] }
+    }
+  };
+  const equipped = [
+    { name: 'Tester', num: 7, stats: { speed: 2, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  // Turn 1
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  await a.expect('ability-fired', 8000); // first fire
+  await a.expect('turn-end', 8000);
+  await b.expect('turn-end', 8000);
+  // Turn 2 — same ability is on cooldown, must NOT fire.
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  await a.expectQuiet('ability-fired', 1200);
+  a.close(); b.close();
+}
+
 async function testAimsWithoutMatch(){
   // Send aims when not in a match — server should not crash, no broadcast.
   const a = new TestClient(uniq('noom'));
@@ -559,7 +659,9 @@ const SCENARIOS = [
   ['queue: cancel then re-queue still pairs',         testCancelQueueAndRequeue],
   ['heartbeat: 28s idle does not drop connection',    testHeartbeatKeepsConnectionAlive],
   ['invite: accept creates no-keys match',            testInviteFlowNoKeys],
-  ['aims without match: no crash',                    testAimsWithoutMatch]
+  ['aims without match: no crash',                    testAimsWithoutMatch],
+  ['ability: no-reqs ability fires + broadcasts',     testAbilityFiresNoReqs],
+  ['ability: cooldown prevents immediate re-fire',    testAbilityCooldown]
 ];
 
 async function main(){

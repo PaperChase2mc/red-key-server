@@ -17,6 +17,10 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Added
+- Phase 3a of the Skill Builder: equipped abilities now actually do something during a match. The server evaluates each player's abilities at the end of every turn and fires their rewards when requirements are met. Working in this round: "no requirements" (fires every cooldown) and "Clash and Win" requirement; Stat Boost, Give Ball, and Teleport-to-Ball rewards; per-player per-ability cooldowns; on-ball vs off-ball gating. A toast and a gold flash appear when an ability fires.
+- Zone-based requirements and rewards (Teleport-to-Zone, Auto-Clash) are recognized but won't fire yet — those land in Phase 3b along with zone visualization on the pitch.
+
 ### Changed
 - The "Attack" and "Defend" labels now sit above and below the field instead of floating over the goal areas. They no longer block players or the ball near the goals.
 
