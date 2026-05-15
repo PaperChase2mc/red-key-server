@@ -781,6 +781,13 @@ function fireRewards(match, pid, ability, fired){
       const dur  = Math.max(1, (r.durationTurns | 0) || 1);
       pushActiveMod(match, pid, stat, amt, dur);
       applied.push({ kind: 'stat-boost', stat, amount: amt, durationTurns: dur });
+    } else if (r.kind === 'action-boost'){
+      // The boost was already applied during planning on the client side
+      // (it stretches the planning range). The server already accepts the
+      // longer endPos because we don't clamp to MAX_LEN here, so this server
+      // record is mainly for client toast + telemetry parity.
+      const mag = (typeof r.magnitude === 'number' && r.magnitude > 0) ? r.magnitude : 1;
+      applied.push({ kind: 'action-boost', magnitude: mag, action: cfg.action || 'none' });
     } else if (r.kind === 'give-ball'){
       const p = match.players[pid];
       if (p){
@@ -858,7 +865,8 @@ function evaluateAbilities(match){
     if (!ability) continue;
     const before = !!match.clash;
     if (fireRewards(match, p.pid, ability, fired)){
-      setCooldown(match, p.pid, p.abilityId, (ability.config && ability.config.cooldownTurns) | 0);
+      const cdN = (ability.config && ability.config.cooldownTurns) | 0;
+      setCooldown(match, p.pid, p.abilityId, cdN > 0 ? cdN + 1 : 0);
     }
     if (!before && match.clash){
       match.pendingRewards = stillPending;
@@ -879,6 +887,9 @@ function evaluateAbilities(match){
       if (!ability) continue;
       if (getCooldown(match, pid, abId) > 0) continue;
       const cfg = ability.config || {};
+      // Instant-fire abilities fire via handleFireAbility, not at turn-end.
+      // Defensive: if a client somehow sends an activation for one, skip it.
+      if (cfg.action === 'none' && cfg.noLockIn) continue;
       if (cfg.scope === 'on-ball'  && match.ballHolder !== pid) continue;
       if (cfg.scope === 'off-ball' && match.ballHolder === pid) continue;
       // If the ability has requirements, they must be met THIS turn for the
@@ -899,12 +910,12 @@ function evaluateAbilities(match){
           cutsceneUrl: cfg.cutsceneUrl || null
         });
         // Still consumes cooldown so you can't spam-defer.
-        setCooldown(match, pid, abId, (cfg.cooldownTurns | 0));
+        setCooldown(match, pid, abId, ((cfg.cooldownTurns | 0) > 0) ? ((cfg.cooldownTurns | 0) + 1) : 0);
         continue;
       }
       const before = !!match.clash;
       if (!fireRewards(match, pid, ability, fired)) continue;
-      setCooldown(match, pid, abId, cfg.cooldownTurns | 0);
+      setCooldown(match, pid, abId, ((cfg.cooldownTurns | 0) > 0) ? ((cfg.cooldownTurns | 0) + 1) : 0);
       if (!before && match.clash){
         return { fired, autoClashStarted: true };
       }
@@ -1077,6 +1088,47 @@ function handleClashDismiss(ws){
     }
   }
 }
+// ── Instant ability fire (action='none' + noLockIn) ───────────────────────
+// The player taps the weapon button mid-planning. The ability fires right
+// away (no aims required), applying its rewards and starting its cooldown.
+// The player can still draw a move and lock in normally for the same turn.
+function handleFireAbility(ws, msg){
+  const c = clientsByWs.get(ws);
+  if (!c || !c.matchId) return;
+  const match = matches.get(c.matchId);
+  if (!match || match.animating) return;
+  if (match.clash && !match.clash.resolved) return; // clash blocks new actions
+  const playerId = msg && msg.playerId;
+  const abilityId = msg && msg.abilityId;
+  if (!playerId || !abilityId) return;
+  const player = match.players[playerId];
+  if (!player) return;
+  // Ownership: a player can only fire abilities on their own team's players.
+  const myTeam = c.username === match.playerA.username ? match.playerA.team : match.playerB.team;
+  if (player.team !== myTeam) return;
+  // Must actually hold that ability.
+  if (!Array.isArray(player.weapons) || !player.weapons.includes(abilityId)) return;
+  const ability = match.abilitiesById && match.abilitiesById[abilityId];
+  if (!ability) return;
+  const cfg = ability.config || {};
+  // Server-enforced: only allow instant fire for action='none' + noLockIn.
+  if (cfg.action !== 'none' || !cfg.noLockIn) return;
+  // Scope gate (matches end-of-turn evaluator).
+  if (cfg.scope === 'on-ball'  && match.ballHolder !== playerId) return;
+  if (cfg.scope === 'off-ball' && match.ballHolder === playerId) return;
+  // Cooldown gate.
+  if (getCooldown(match, playerId, abilityId) > 0) return;
+  const fired = [];
+  if (!fireRewards(match, playerId, ability, fired)) return;
+  const cdN = (cfg.cooldownTurns | 0);
+  setCooldown(match, playerId, abilityId, cdN > 0 ? cdN + 1 : 0);
+  for (const ev of fired){
+    broadcastMatch(match, { type: 'ability-fired', ...ev });
+  }
+  // Push the new state so any teleport/give-ball is reflected immediately.
+  broadcastMatch(match, { type: 'turn-state', state: snapshotState(match) });
+}
+
 function applyClashOutcomeServer(match, outcome){
   const { winnerId, loserId, throwAngle, throwDist } = outcome;
   const loser = match.players[loserId];
@@ -1298,6 +1350,7 @@ function handleMessage(ws, msg){
     }
     case 'qte-score':   handleQteScore(ws, msg);   break;
     case 'clash-dismiss': handleClashDismiss(ws); break;
+    case 'fire-ability': handleFireAbility(ws, msg); break;
     case 'match-quit': {
       if (!c || !c.matchId) break;
       const match = matches.get(c.matchId);

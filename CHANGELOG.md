@@ -2,6 +2,20 @@
 
 All notable changes to Red Key. Most recent first.
 
+## 2026-05-14
+
+### Added
+- Skill Builder Behavior section now has an Action field that decides what the ability actually does when you tap its weapon button. On-Ball abilities pick between Kick (locks in like a normal kick — ball moves, player stays), Dribble (player and ball move together), or None. Off-Ball abilities pick between Movement (the player just runs to a new spot) or None. None means the player sits still, but the ability's requirements and rewards still evaluate and fire.
+- New "Action Boost" reward type. Pick a magnitude (1.0 = none, 1.5 = +50%, 2.0 = double) and it scales the planning range of whatever action the ability does — stronger kicks, longer dribbles, further runs. For Dribble it stretches both the player run and the ball arc simultaneously. The boost is greyed out when Action is None since there's nothing to boost.
+- New "Fire instantly" behavior toggle, only shown when Action is None. With it on, tapping the weapon button fires the ability immediately mid-turn (applying its rewards right then) instead of waiting for lock-in — and the player can still draw a movement/kick and lock in normally for the same turn. The server has a new `fire-ability` message that handles this path and a matching gate so end-of-turn evaluation doesn't double-fire.
+- Activating a Kick or Dribble ability now auto-switches the player into the matching planning mode, so the right kind of aim arrow is ready to draw the instant you tap the weapon.
+
+### Changed
+- Cooldowns now block the exact number of turns configured. Previously "3 turns" meant 2 turns of dead time because the same-turn decrement ate one. The server and the practice evaluator now set cooldown to `N + 1` when an ability fires, so a value of 3 actually keeps the ability unusable for the next 3 planning phases.
+- The weapon button hollows out and shows `Name · 3t` (dashed border, strikethrough, dimmed) while an ability is on cooldown, and refuses clicks. It snaps back to its normal look as soon as the cooldown reaches zero.
+- The Skill Builder's existing-abilities list now shows an `action` pill (kick/dribble/movement) and an `instant` pill when "Fire instantly" is enabled, so admins can scan their abilities at a glance.
+- When a player has two weapons and the first is on cooldown, the action row now shows the second one (instead of acting like no weapon is available) — and falls back to a hollowed-out display when both are on cooldown.
+
 ## 2026-05-12
 
 ### Added

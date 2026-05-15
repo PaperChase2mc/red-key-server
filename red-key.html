@@ -492,6 +492,16 @@
     color: #14110a;
     box-shadow: 0 0 12px rgba(251,191,36,0.45);
   }
+  .seg.weapon-seg.cooldown,
+  .seg.weapon-seg.cooldown:disabled{
+    background: transparent;
+    color: var(--ink-dimmer);
+    border-color: var(--line-2);
+    border-style: dashed;
+    opacity: 0.55;
+    cursor: not-allowed;
+    text-decoration: line-through;
+  }
   .mode-label{
     font-family:"JetBrains Mono", monospace;
     font-size: 10px;text-transform: uppercase;letter-spacing: 0.22em;
@@ -2299,6 +2309,18 @@
           <input type="number" id="sb-cooldown" min="0" max="20" value="0" />
         </div>
       </div>
+      <div style="margin-bottom:10px">
+        <div style="color:var(--ink-dimmer);font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:4px">Action when activated</div>
+        <div class="sb-segs" id="sb-action-segs">
+          <button data-sb-action="kick"     type="button">Kick</button>
+          <button data-sb-action="dribble"  type="button">Dribble</button>
+          <button data-sb-action="movement" type="button">Movement</button>
+          <button data-sb-action="none"     type="button" class="on">None</button>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.14em;color:var(--ink-dimmer);margin-top:4px;text-transform:uppercase">
+          On-Ball → Kick / Dribble / None · Off-Ball → Movement / None · None = sit still (reqs &amp; rewards still fire)
+        </div>
+      </div>
       <div style="display:flex;flex-direction:column;gap:6px">
         <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="sb-takes-turn" />
@@ -2307,6 +2329,10 @@
         <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="sb-applies-next" />
           <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Reward applies on the next turn (not the one activated)</span>
+        </label>
+        <label id="sb-no-lockin-label" style="display:none;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-no-lockin" />
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--yellow);text-transform:uppercase">Fire instantly (no lock-in needed — player can still do another action this turn)</span>
         </label>
       </div>
     </div>
@@ -3136,14 +3162,22 @@
     if (isFrozen(id)) return 0;
     const sf = (typeof staminaFactorFor === 'function') ? staminaFactorFor(id) : 1;
     if (holderIsControlled() && id === ballHolderId){
-      if (mode === 'dribble') return DRIBBLE_PLAYER_MAX * sf;
+      if (mode === 'dribble'){
+        // Dribble boost extends the player's dribble run.
+        return DRIBBLE_PLAYER_MAX * sf * activeActionBoost(id, 'dribble');
+      }
       return 0; // holder doesn't run in kick mode
     }
-    return MAX_LEN * sf;
+    // Off-ball runners benefit from a 'movement' action-boost.
+    return MAX_LEN * sf * activeActionBoost(id, 'movement');
   }
   function maxLenBall(){
     if (!hasBall()) return 0;
-    return mode === 'kick' ? MAX_LEN : DRIBBLE_BALL_MAX;
+    if (mode === 'kick'){
+      // Kick range stretches with a 'kick' action-boost on the holder.
+      return MAX_LEN * activeActionBoost(ballHolderId, 'kick');
+    }
+    return DRIBBLE_BALL_MAX * activeActionBoost(ballHolderId, 'dribble');
   }
   function colorsFor(key){
     // key: any player id | 'ball'
@@ -3309,10 +3343,37 @@
     return !!(localActivations[pid] && localActivations[pid][abId]);
   }
   function clearAllActivations(){ localActivations = {}; }
+
+  // Cooldown bookkeeping mirrors the server so the UI can hollow out the
+  // weapon button. Updated locally on ability-fired events and on the local
+  // practice path; decremented on every turn-start.
+  let clientCooldowns = {};
+  function getClientCooldown(pid, abId){
+    return (clientCooldowns[pid] && clientCooldowns[pid][abId]) | 0;
+  }
+  function setClientCooldown(pid, abId, turns){
+    if (!clientCooldowns[pid]) clientCooldowns[pid] = {};
+    clientCooldowns[pid][abId] = Math.max(0, turns | 0);
+  }
+  function decrementAllClientCooldowns(){
+    for (const pid of Object.keys(clientCooldowns)){
+      for (const aid of Object.keys(clientCooldowns[pid])){
+        clientCooldowns[pid][aid] = Math.max(0, (clientCooldowns[pid][aid] | 0) - 1);
+        if (clientCooldowns[pid][aid] === 0) delete clientCooldowns[pid][aid];
+      }
+      if (Object.keys(clientCooldowns[pid]).length === 0) delete clientCooldowns[pid];
+    }
+  }
+  function clearAllClientCooldowns(){ clientCooldowns = {}; }
+
   function firstUsableWeapon(pid){
     const p = pid && players[pid];
     if (!p || !Array.isArray(p.weapons)) return null;
     const onBall = (ballHolderId === pid);
+    // First pass: return an OFF-cooldown weapon matching scope. Falls back to
+    // the first scope-matching weapon (cooled-down or not) so the UI can show
+    // it as hollowed-out instead of pretending it doesn't exist.
+    let fallback = null;
     for (const abId of p.weapons){
       if (!abId) continue;
       const ab = db.abilities[abId];
@@ -3321,9 +3382,11 @@
       const ok = (scope === 'on-ball')  ? onBall
               :  (scope === 'off-ball') ? !onBall
               :  true;
-      if (ok) return ab;
+      if (!ok) continue;
+      if (getClientCooldown(pid, abId) === 0) return ab;
+      if (!fallback) fallback = ab;
     }
-    return null;
+    return fallback;
   }
   function refreshWeaponSeg(){
     const btn = document.getElementById('weapon-use-btn');
@@ -3332,13 +3395,93 @@
     if (!ab){
       btn.textContent = 'None';
       btn.disabled = true;
+      btn.classList.remove('activated', 'cooldown');
+      return;
+    }
+    const cd = getClientCooldown(selectedId, ab.id);
+    if (cd > 0){
+      // Hollowed-out cooldown state: shows the name + remaining turns,
+      // disabled, and styled differently from a normal disabled button.
+      btn.textContent = `${ab.name || 'Weapon'} · ${cd}t`;
+      btn.disabled = true;
+      btn.classList.add('cooldown');
       btn.classList.remove('activated');
+      btn.title = `On cooldown · ${cd} turn(s) remaining`;
       return;
     }
     btn.textContent = ab.name || 'Weapon';
     btn.disabled = false;
+    btn.classList.remove('cooldown');
     btn.title = ab.description || '';
     btn.classList.toggle('activated', isActivated(selectedId, ab.id));
+  }
+
+  // Instant-fire path: tap the weapon button → ability fires immediately
+  // without locking in. Used when cfg.action === 'none' && cfg.noLockIn. The
+  // player can still draw a movement/kick and lock in this turn after.
+  function fireAbilityInstant(pid, ab){
+    if (!ab || !ab.config) return false;
+    const cfg = ab.config;
+    // Practice: apply locally so the player sees the effect immediately.
+    if (practiceTestActive && typeof practiceFireRewards === 'function'){
+      const applied = practiceFireRewards(pid, ab);
+      flashAbilityFired({
+        type: 'ability-fired', playerId: pid, abilityId: ab.id,
+        abilityName: ab.name, rewards: applied,
+        soundUrl: cfg.soundUrl || null, cutsceneUrl: cfg.cutsceneUrl || null
+      });
+      // Also seed the practice cooldown so the practice evaluator agrees.
+      if (typeof practiceCooldowns !== 'undefined'){
+        if (!practiceCooldowns[pid]) practiceCooldowns[pid] = {};
+        practiceCooldowns[pid][ab.id] = (cfg.cooldownTurns | 0) + 1;
+      }
+      // Mirror the cooldown on the client so the button hollows out.
+      if ((cfg.cooldownTurns | 0) > 0){
+        setClientCooldown(pid, ab.id, (cfg.cooldownTurns | 0) + 1);
+      }
+      return applied.length > 0;
+    }
+    // Multiplayer: ask the server to fire it. The server owns simulation, so
+    // we just show a hint locally and let the broadcast ability-fired event
+    // do the visual feedback and cooldown update.
+    if (mpMatchStarted && typeof wsSend === 'function'){
+      wsSend({ type: 'fire-ability', playerId: pid, abilityId: ab.id });
+      if (hint) hint.textContent = `Activating "${ab.name}"…`;
+      return true;
+    }
+    // Solo / offline: just flash and set cooldown — no rewards to apply.
+    flashAbilityFired({
+      type: 'ability-fired', playerId: pid, abilityId: ab.id,
+      abilityName: ab.name, rewards: [],
+      soundUrl: cfg.soundUrl || null, cutsceneUrl: cfg.cutsceneUrl || null
+    });
+    if ((cfg.cooldownTurns | 0) > 0){
+      setClientCooldown(pid, ab.id, (cfg.cooldownTurns | 0) + 1);
+    }
+    return true;
+  }
+
+  // Sum of action-boost magnitudes from any activated abilities on `pid`
+  // whose action matches `action`. Stacks multiplicatively across rewards
+  // but stays 1.0 when nothing applies, so callers can do `len * boost`.
+  function activeActionBoost(pid, action){
+    let mult = 1;
+    const acts = localActivations[pid];
+    if (!acts) return 1;
+    for (const abId of Object.keys(acts)){
+      const ab = db.abilities[abId];
+      if (!ab) continue;
+      const cfg = ab.config || {};
+      if (cfg.action !== action) continue;
+      if (Array.isArray(cfg.rewards)){
+        for (const r of cfg.rewards){
+          if (r && r.kind === 'action-boost' && typeof r.magnitude === 'number'){
+            mult *= Math.max(0.01, r.magnitude);
+          }
+        }
+      }
+    }
+    return mult;
   }
   const weaponUseBtn = document.getElementById('weapon-use-btn');
   if (weaponUseBtn){
@@ -3347,9 +3490,32 @@
       if (mpMatchStarted && mpMyAimsLocked) return;
       const ab = firstUsableWeapon(selectedId);
       if (!ab) return;
+      // Blocked by cooldown? Bail with a hint.
+      if (getClientCooldown(selectedId, ab.id) > 0){
+        if (hint) hint.textContent = `${ab.name} is on cooldown · ${getClientCooldown(selectedId, ab.id)} turn(s) left`;
+        return;
+      }
+      const cfg = ab.config || {};
       const cur = isActivated(selectedId, ab.id);
+      // Instant-fire path: action='none' + noLockIn lets the ability fire
+      // immediately. The player doesn't burn their lock-in and can still plan
+      // a move + lock in this turn.
+      if (!cur && cfg.action === 'none' && cfg.noLockIn){
+        fireAbilityInstant(selectedId, ab);
+        // Don't toggle activation — the ability already fired.
+        refreshWeaponSeg();
+        if (typeof refreshLockBtn === 'function') refreshLockBtn();
+        return;
+      }
       setActivation(selectedId, ab.id, !cur);
+      // Auto-set mode to match the ability's action so the player can
+      // immediately plan the right kind of move.
+      if (!cur){
+        if (cfg.action === 'kick'    && hasBall() && ballHolderId === selectedId){ mode = 'kick';    refreshModeUI(); }
+        if (cfg.action === 'dribble' && hasBall() && ballHolderId === selectedId){ mode = 'dribble'; refreshModeUI(); }
+      }
       refreshWeaponSeg();
+      refreshArrows();
       // The Lock In button label/state may depend on activation when the
       // ability is "takes-turn" — recompute.
       if (typeof refreshLockBtn === 'function') refreshLockBtn();
@@ -3740,6 +3906,12 @@
     // Phase 5 v2: if we're in a test-ability practice run, fire any matched
     // abilities at end of turn using a local mirror of the server evaluator.
     if (typeof evaluatePracticeAbilities === 'function') evaluatePracticeAbilities();
+    // Tick local cooldowns down by one — happens after practice evaluator so
+    // any ability that fired this turn keeps its full cooldown for the start
+    // of the next planning phase.
+    decrementAllClientCooldowns();
+    clearAllActivations();
+    refreshWeaponSeg();
     refreshArrows();
     refreshModeUI();
     refreshPossessionUI();
@@ -4701,6 +4873,8 @@
     playerAims = freshAims();
     frozen = freshFrozen();
     ballAim = null;
+    clearAllClientCooldowns();
+    clearAllActivations();
     turn = 1; mode = 'kick';
     turnEl.textContent = '01';
     scoreUs = 0; scoreThem = 0;
@@ -5679,9 +5853,21 @@
     const playerId = msg.playerId;
     const player = players[playerId];
     const who = player ? `#${player.num}` : (playerId || '?');
+    // Sync local cooldown so the weapon button hollows out right away. We
+    // overshoot by 1 because we also decrement at turn-start, so a config
+    // value of 3 actually blocks the next 3 turns end-to-end.
+    if (msg.abilityId){
+      const ab = db.abilities[msg.abilityId];
+      const cd = (ab && ab.config && ab.config.cooldownTurns) | 0;
+      if (cd > 0){
+        setClientCooldown(playerId, msg.abilityId, cd + 1);
+        refreshWeaponSeg();
+      }
+    }
     const rewards = Array.isArray(msg.rewards) ? msg.rewards : [];
     const parts = rewards.map(r => {
-      if (r.kind === 'stat-boost') return `${r.stat} ${r.amount > 0 ? '+' : ''}${r.amount}`;
+      if (r.kind === 'stat-boost')   return `${r.stat} ${r.amount > 0 ? '+' : ''}${r.amount}`;
+      if (r.kind === 'action-boost') return `${(r.magnitude || 1).toFixed(1)}× action`;
       if (r.kind === 'give-ball')        return 'gives ball';
       if (r.kind === 'teleport-to-ball') return 'tp-to-ball';
       if (r.kind === 'teleport-to-zone') return 'tp-to-zone';
@@ -5842,6 +6028,9 @@
           turn = msg.turn;
           turnEl.textContent = String(turn).padStart(2, '0');
         }
+        // New planning phase → tick local cooldowns down by 1 so the hollow
+        // weapon button counts toward zero each turn.
+        decrementAllClientCooldowns();
         // Local end-of-turn UI (animating=false, clear arrows, restart timer)
         playerAims = freshAims();
         ballAim = null;
@@ -5876,12 +6065,16 @@
         animating = false;
         mpMyAimsLocked = null;
         mpOpponentAimsLocked = null;
+        // Cooldowns survive a goal but the server resets timing — keep ours
+        // in sync by clearing on kickoff, matching server behavior.
+        clearAllClientCooldowns();
         bounceRow.style.display = 'none';
         clearAllArrows();
         refreshArrows();
         refreshModeUI();
         refreshPossessionUI();
         refreshRosterUI();
+        refreshWeaponSeg();
         if (typeof startTurnTimer === 'function') startTurnTimer();
         hint.textContent = msg.side === 'us'
           ? 'GOAL · Enemy kicks off.'
@@ -6525,6 +6718,8 @@
   function defaultSkillConfig(){
     return {
       scope: 'on-ball',
+      action: 'none',            // 'kick'|'dribble' (on-ball) | 'movement' (off-ball) | 'none'
+      noLockIn: false,           // action='none' only: fires instantly, no lock-in required
       cooldownTurns: 0,
       takesTurn: false,          // ON: activating consumes the turn (must lock in)
       appliesNext: false,        // ON: reward defers to the next turn-end
@@ -6549,32 +6744,100 @@
   ];
   const REWARD_KINDS = [
     ['stat-boost',         'Stat Boost'],
+    ['action-boost',       'Action Boost (kick/dribble/move stronger)'],
     ['give-ball',          'Give Ball'],
     ['teleport-to-ball',   'Teleport to Ball'],
     ['teleport-to-zone',   'Teleport to Zone'],
     ['auto-clash',         'Auto-Clash (Enemy in Zone)']
   ];
+  // Maps Scope → allowed Action values. UI shows only valid buttons.
+  const ACTIONS_BY_SCOPE = {
+    'on-ball':  ['kick', 'dribble', 'none'],
+    'off-ball': ['movement', 'none']
+  };
+  function sbActionLabel(a){
+    if (a === 'kick')     return 'Kick';
+    if (a === 'dribble')  return 'Dribble';
+    if (a === 'movement') return 'Movement';
+    return 'None';
+  }
   const REQ_KINDS = [
     ['clash-and-win', 'Clash and Win'],
     ['zone',          'Zone Condition']
   ];
 
   // ── Scope segmented buttons ─────────────────
+  function normalizeActionForScope(){
+    // If the current action isn't allowed under the current scope, fall back
+    // to 'none'. Keeps the UI from showing an invalid combo.
+    const allowed = ACTIONS_BY_SCOPE[currentSkillConfig.scope] || ['none'];
+    if (!allowed.includes(currentSkillConfig.action)){
+      currentSkillConfig.action = 'none';
+    }
+  }
   sbScopeOn.addEventListener('click', () => {
     currentSkillConfig.scope = 'on-ball';
     sbScopeOn.classList.add('on');
     sbScopeOff.classList.remove('on');
+    normalizeActionForScope();
+    renderActionSegs();
+    renderNoLockInRow();
+    renderRewardsList();
   });
   sbScopeOff.addEventListener('click', () => {
     currentSkillConfig.scope = 'off-ball';
     sbScopeOff.classList.add('on');
     sbScopeOn.classList.remove('on');
+    normalizeActionForScope();
+    renderActionSegs();
+    renderNoLockInRow();
+    renderRewardsList();
   });
   sbCooldown.addEventListener('input', () => {
     currentSkillConfig.cooldownTurns = Math.max(0, parseInt(sbCooldown.value || '0', 10) | 0);
   });
   sbTakesTurn.addEventListener('change',  () => { currentSkillConfig.takesTurn   = !!sbTakesTurn.checked; });
   sbAppliesNext.addEventListener('change',() => { currentSkillConfig.appliesNext = !!sbAppliesNext.checked; });
+
+  // ── Action segmented buttons (Kick / Dribble / Movement / None) ───────
+  const sbActionSegs = document.getElementById('sb-action-segs');
+  const sbNoLockInLbl = document.getElementById('sb-no-lockin-label');
+  const sbNoLockIn   = document.getElementById('sb-no-lockin');
+  function renderActionSegs(){
+    if (!sbActionSegs) return;
+    const allowed = ACTIONS_BY_SCOPE[currentSkillConfig.scope] || ['none'];
+    sbActionSegs.querySelectorAll('button[data-sb-action]').forEach(btn => {
+      const a = btn.dataset.sbAction;
+      btn.style.display = allowed.includes(a) ? '' : 'none';
+      btn.classList.toggle('on', a === currentSkillConfig.action);
+    });
+  }
+  function renderNoLockInRow(){
+    if (!sbNoLockInLbl) return;
+    // Only meaningful when action='none' — otherwise the player needs to
+    // commit a movement/kick, which requires lock-in by definition.
+    const showRow = currentSkillConfig.action === 'none';
+    sbNoLockInLbl.style.display = showRow ? 'inline-flex' : 'none';
+    if (!showRow) currentSkillConfig.noLockIn = false;
+    if (sbNoLockIn) sbNoLockIn.checked = !!currentSkillConfig.noLockIn;
+  }
+  if (sbActionSegs){
+    sbActionSegs.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-sb-action]');
+      if (!btn) return;
+      currentSkillConfig.action = btn.dataset.sbAction;
+      renderActionSegs();
+      renderNoLockInRow();
+      // Rewards reference the action — action-boost may need to clear when
+      // switching to 'none'. Re-render so the user sees the disabled rows.
+      renderRewardsList();
+    });
+  }
+  if (sbNoLockIn){
+    sbNoLockIn.addEventListener('change', () => {
+      currentSkillConfig.noLockIn = !!sbNoLockIn.checked;
+    });
+  }
 
   // ── Zones ────────────────────────────────────
   function renderZonesList(){
@@ -6750,6 +7013,21 @@
         ${durHtml}
       `;
     }
+    if (reward.kind === 'action-boost'){
+      // The boost amplifies whatever action the ability does. Disabled if
+      // the ability has no action selected (nothing to boost).
+      const mag = (typeof reward.magnitude === 'number') ? reward.magnitude : 1.5;
+      const note = (currentSkillConfig.action === 'none')
+        ? `<div style="color:var(--red);font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.14em;margin-top:4px;text-transform:uppercase">Set an Action above — None has nothing to boost</div>`
+        : `<div style="color:var(--ink-dimmer);font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.14em;margin-top:4px;text-transform:uppercase">Boosts ${sbActionLabel(currentSkillConfig.action)} · 1.0 = none · 1.5 = +50% · 2.0 = double</div>`;
+      return `
+        <label>Magnitude (1.0 = none)
+          <input type="number" data-field="magnitude" min="0.1" max="10" step="0.1" value="${mag}" />
+        </label>
+        ${durHtml}
+        ${note}
+      `;
+    }
     if (reward.kind === 'teleport-to-zone' || reward.kind === 'auto-clash'){
       return `<label>Zone <select data-field="zoneId">${zoneOptionsHtml(reward.zoneId)}</select></label>${durHtml}`;
     }
@@ -6788,6 +7066,9 @@
               reward.stat = reward.stat || 'speed';
               if (typeof reward.amount !== 'number') reward.amount = 1;
             }
+            if (reward.kind === 'action-boost'){
+              if (typeof reward.magnitude !== 'number') reward.magnitude = 1.5;
+            }
             if (reward.kind === 'teleport-to-zone' || reward.kind === 'auto-clash'){
               if (!reward.zoneId) reward.zoneId = currentSkillConfig.zones[0] ? currentSkillConfig.zones[0].id : '';
             }
@@ -6795,6 +7076,8 @@
             renderRewardsList();
           } else if (f === 'amount'){
             reward.amount = parseInt(el.value || '0', 10) | 0;
+          } else if (f === 'magnitude'){
+            reward.magnitude = Math.max(0.1, parseFloat(el.value || '1') || 1);
           } else if (f === 'durationTurns'){
             reward.durationTurns = Math.max(1, parseInt(el.value || '1', 10) | 0);
           } else {
@@ -6827,6 +7110,9 @@
     sbCooldown.value = String(currentSkillConfig.cooldownTurns | 0);
     sbTakesTurn.checked   = !!currentSkillConfig.takesTurn;
     sbAppliesNext.checked = !!currentSkillConfig.appliesNext;
+    normalizeActionForScope();
+    renderActionSegs();
+    renderNoLockInRow();
     renderZonesList();
     renderRequirementsList();
     renderRewardsList();
@@ -6964,6 +7250,8 @@
       const cfg = a.config || {};
       const pills = [];
       if (cfg.scope) pills.push(`<span class="effect-pill">${cfg.scope}</span>`);
+      if (cfg.action && cfg.action !== 'none') pills.push(`<span class="effect-pill">${cfg.action}</span>`);
+      if (cfg.noLockIn) pills.push(`<span class="effect-pill">instant</span>`);
       if (cfg.cooldownTurns) pills.push(`<span class="effect-pill">cd ${cfg.cooldownTurns}t</span>`);
       const zones = (cfg.zones || []).length;
       const reqs  = (cfg.requirements || []).length;
@@ -7010,6 +7298,13 @@
   function validateSkillConfig(cfg){
     // Catch the easy mistakes before we hit Supabase — saves a round trip
     // and gives the admin a specific message.
+    const allowedActions = ACTIONS_BY_SCOPE[cfg.scope] || ['none'];
+    if (!allowedActions.includes(cfg.action)){
+      return `Action "${cfg.action}" is not valid for scope "${cfg.scope}".`;
+    }
+    if (cfg.noLockIn && cfg.action !== 'none'){
+      return 'Fire instantly can only be enabled when Action is None.';
+    }
     for (const r of cfg.requirements){
       if (r.kind === 'zone' && !r.zoneId){
         return 'A zone requirement is missing its target zone.';
@@ -7021,6 +7316,14 @@
       }
       if (r.kind === 'stat-boost' && (!r.stat || typeof r.amount !== 'number')){
         return 'A stat-boost reward is missing its stat or amount.';
+      }
+      if (r.kind === 'action-boost'){
+        if (cfg.action === 'none'){
+          return 'Action Boost needs an Action — set Kick, Dribble, or Movement above first.';
+        }
+        if (typeof r.magnitude !== 'number' || r.magnitude <= 0){
+          return 'An action-boost reward is missing its magnitude.';
+        }
       }
     }
     return '';
@@ -7113,6 +7416,7 @@
     }
     // Reset eval state.
     for (const k in practiceCooldowns) delete practiceCooldowns[k];
+    clearAllClientCooldowns();
     practiceClashWins = new Set();
     practiceTestActive = true;
     // Leave the admin overlays.
@@ -7216,6 +7520,11 @@
       if (!r || !r.kind) continue;
       if (r.kind === 'stat-boost'){
         applied.push({ kind: 'stat-boost', stat: r.stat, amount: r.amount });
+      } else if (r.kind === 'action-boost'){
+        // The boost has already affected this turn's planning (via
+        // activeActionBoost). We just record it as fired for the toast +
+        // server parity.
+        applied.push({ kind: 'action-boost', magnitude: r.magnitude, action: cfg.action || 'none' });
       } else if (r.kind === 'give-ball'){
         ballHolderId = ownerId;
         ballOffset = { x: 0, y: 32 };
@@ -7262,7 +7571,7 @@
       const applied = practiceFireRewards(p.pid, ability);
       if (applied.length > 0){
         if (!practiceCooldowns[p.pid]) practiceCooldowns[p.pid] = {};
-        practiceCooldowns[p.pid][TEST_ABILITY_ID] = (cfg.cooldownTurns | 0) || 0;
+        practiceCooldowns[p.pid][TEST_ABILITY_ID] = ((cfg.cooldownTurns | 0) || 0) + ((cfg.cooldownTurns | 0) ? 1 : 0);
         flashAbilityFired({
           type: 'ability-fired', playerId: p.pid, abilityId: TEST_ABILITY_ID,
           abilityName: ability.name, rewards: applied,
@@ -7278,6 +7587,9 @@
       if (!Array.isArray(p.weapons) || !p.weapons.includes(TEST_ABILITY_ID)) continue;
       if (!isActivated(pid, TEST_ABILITY_ID)) continue;     // activation gate
       if (practiceCooldowns[pid] && practiceCooldowns[pid][TEST_ABILITY_ID] > 0) continue;
+      // Instant-fire abilities fired mid-turn via fireAbilityInstant; never
+      // re-fire at end-of-turn.
+      if (cfg.action === 'none' && cfg.noLockIn) continue;
       if (cfg.scope === 'on-ball'  && ballHolderId !== pid) continue;
       if (cfg.scope === 'off-ball' && ballHolderId === pid) continue;
       if (!practiceEvalReqs(pid, cfg)) continue;
@@ -7290,13 +7602,13 @@
           soundUrl: cfg.soundUrl || null, cutsceneUrl: cfg.cutsceneUrl || null
         });
         if (!practiceCooldowns[pid]) practiceCooldowns[pid] = {};
-        practiceCooldowns[pid][TEST_ABILITY_ID] = (cfg.cooldownTurns | 0) || 0;
+        practiceCooldowns[pid][TEST_ABILITY_ID] = ((cfg.cooldownTurns | 0) || 0) + ((cfg.cooldownTurns | 0) ? 1 : 0);
         continue;
       }
       const applied = practiceFireRewards(pid, ability);
       if (applied.length === 0) continue;
       if (!practiceCooldowns[pid]) practiceCooldowns[pid] = {};
-      practiceCooldowns[pid][TEST_ABILITY_ID] = (cfg.cooldownTurns | 0) || 0;
+      practiceCooldowns[pid][TEST_ABILITY_ID] = ((cfg.cooldownTurns | 0) || 0) + ((cfg.cooldownTurns | 0) ? 1 : 0);
       flashAbilityFired({
         type: 'ability-fired',
         playerId: pid,
