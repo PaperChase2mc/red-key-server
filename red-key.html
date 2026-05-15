@@ -4063,7 +4063,8 @@
   const RING_R_MAX = 90;
   const RING_R_MIN = 14; // perfect-lock target
   let clash = null;
-  let pendingClash = null;
+  // (pendingClash is declared once earlier in the file alongside other
+  // turn-state vars — don't re-declare it here.)
   const qteRing      = document.getElementById('qte-ring');
   const qteRingStage = document.getElementById('qte-ring-stage');
   const clashMarkerLayer = document.getElementById('clash-marker-layer');
