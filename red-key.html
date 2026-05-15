@@ -368,23 +368,6 @@
   .pitch *{user-select:none}
   .player.movable{cursor:grab}
   .player.movable:active{cursor:grabbing}
-  /* Phase 5: sandbox draggables on the test pitch. */
-  .sandbox-draggable{ cursor: grab }
-  .sandbox-draggable:active{ cursor: grabbing }
-  #sandbox-pitch.placing-zone{ cursor: crosshair }
-  #sandbox-result-body .row{ display:flex; gap:8px; align-items:flex-start; margin-bottom: 4px }
-  #sandbox-result-body .tag{
-    display:inline-block; padding: 1px 7px;
-    font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
-    font-family: "JetBrains Mono", monospace;
-    border: 1px solid currentColor;
-    min-width: 56px; text-align: center;
-  }
-  #sandbox-result-body .tag.met{ color: #4ade80 }
-  #sandbox-result-body .tag.unmet{ color: var(--red) }
-  #sandbox-result-body .tag.skip{ color: var(--ink-dimmer) }
-  #sandbox-result-body .tag.reward{ color: var(--yellow) }
-
   /* Phase 3c: player-placed zones — chip row above the pitch during planning. */
   .zone-place-row{
     display: none;
@@ -1248,6 +1231,15 @@
     background: var(--yellow); color: #14110a;
     border-color: var(--yellow);
     font-weight: 800; letter-spacing: 0.18em;
+  }
+  .player-tile .pweap-desc{
+    margin-top: 6px;
+    font-family: "Saira", sans-serif;
+    font-size: 11px; line-height: 1.4;
+    color: var(--ink-dim);
+    background: rgba(251,191,36,0.06);
+    border-left: 2px solid var(--yellow);
+    padding: 6px 8px;
   }
   .player-tile.equipped::after{
     content: attr(data-equipped-slot);
@@ -2186,70 +2178,6 @@
   </div>
 </div>
 
-<!-- Phase 5: Skill Builder ability test sandbox -->
-<div class="full-overlay" id="sandbox-overlay" role="dialog" aria-modal="true" aria-label="Ability sandbox">
-  <div class="overlay-card" style="max-width: 640px">
-    <h2 class="overlay-title"><em>Test</em> Ability</h2>
-    <div class="overlay-sub" id="sandbox-subtitle">Drag the players + ball, then press Fire Turn.</div>
-
-    <div class="admin-section">
-      <h3>Scenario</h3>
-      <svg id="sandbox-pitch" viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg"
-           style="display:block;width:100%;max-width:300px;margin:0 auto;background:var(--bg);border:1px solid var(--line);touch-action:none;user-select:none">
-        <rect x="2" y="2" width="296" height="396" fill="none" stroke="#3a3a48" stroke-width="0.6"/>
-        <line x1="2" y1="200" x2="298" y2="200" stroke="#3a3a48" stroke-width="0.4" stroke-dasharray="3 3"/>
-        <g id="sandbox-zones-layer" pointer-events="none"></g>
-        <circle id="sandbox-ball" class="sandbox-draggable" cx="150" cy="200" r="6" fill="#fbbf24" stroke="#5a3c00" stroke-width="1"/>
-        <g id="sandbox-owner" class="sandbox-draggable" transform="translate(150, 300)">
-          <circle r="14" fill="#10b981" stroke="#0a6e51" stroke-width="2"/>
-          <text x="0" y="4" text-anchor="middle" fill="#0a0a0a" font-family="Saira Condensed,sans-serif" font-weight="800" font-size="11">ME</text>
-        </g>
-        <g id="sandbox-enemy" class="sandbox-draggable" transform="translate(150, 100)">
-          <circle r="14" fill="#ef2b3a" stroke="#5a0a14" stroke-width="2"/>
-          <text x="0" y="4" text-anchor="middle" fill="#ffffff" font-family="Saira Condensed,sans-serif" font-weight="800" font-size="11">EN</text>
-        </g>
-      </svg>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.16em;color:var(--ink-dimmer);text-transform:uppercase;margin-top:8px;text-align:center">
-        Drag any of: <span style="color:#10b981">Owner</span> · <span style="color:#ef2b3a">Enemy</span> · <span style="color:#fbbf24">Ball</span>
-      </div>
-    </div>
-
-    <div class="admin-section">
-      <h3>Modifiers</h3>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="sandbox-has-ball" />
-          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Owner currently holds the ball</span>
-        </label>
-        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="sandbox-clash-win" />
-          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Owner won a clash this turn</span>
-        </label>
-      </div>
-    </div>
-
-    <div class="admin-section" id="sandbox-place-section" style="display:none">
-      <h3>Player-Placed Zones</h3>
-      <div id="sandbox-place-chips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.16em;color:var(--ink-dimmer);text-transform:uppercase;margin-top:6px">
-        Tap a chip then click on the test pitch to drop it.
-      </div>
-    </div>
-
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-      <button class="primary-btn" id="sandbox-fire" type="button">Fire Turn</button>
-      <button class="ghost-btn"   id="sandbox-reset" type="button">Reset Scenario</button>
-    </div>
-
-    <div class="admin-section" id="sandbox-result-section" style="display:none">
-      <h3>Result</h3>
-      <div id="sandbox-result-body" style="font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:var(--ink)"></div>
-    </div>
-
-    <button class="ghost-btn" id="sandbox-close" type="button">← Back to Skill Builder</button>
-  </div>
-</div>
-
 <!-- Phase 4: cutscene overlay (full screen video on ability fire) -->
 <div class="cutscene-overlay" id="cutscene-overlay">
   <video class="cutscene-video" id="cutscene-video" playsinline preload="auto"></video>
@@ -2287,28 +2215,8 @@
     <div class="admin-section">
       <h3 id="sb-form-title">New Ability</h3>
       <input type="hidden" id="sb-id" />
-      <div class="row2" style="margin-bottom:8px">
-        <input type="text" id="sb-name" placeholder="Name (required)" maxlength="32" />
-        <select id="sb-trigger" title="Legacy trigger (shown on player cards)">
-          <option value="on-kick">On Kick</option>
-          <option value="on-clash-win">On Clash Win</option>
-          <option value="on-clash-lose">On Clash Lose</option>
-          <option value="on-turn-start">On Turn Start</option>
-          <option value="passive">Passive</option>
-        </select>
-      </div>
-      <textarea id="sb-desc" placeholder="Description (optional)" maxlength="160" style="width:100%;margin-bottom:8px"></textarea>
-      <div class="row2" style="margin-bottom:10px">
-        <select id="sb-effect" title="Legacy effect (shown on player cards)">
-          <option value="speed-boost">Speed Boost</option>
-          <option value="kick-power">Kick Power</option>
-          <option value="stamina-boost">Stamina Boost</option>
-          <option value="freeze-immune">Freeze Immunity</option>
-          <option value="key-gift">Key Reward</option>
-          <option value="bonus-clash">Bonus QTE Score</option>
-        </select>
-        <input type="number" id="sb-magnitude" placeholder="Magnitude (e.g. 25)" min="0" max="999" />
-      </div>
+      <input type="text" id="sb-name" placeholder="Name (required)" maxlength="32" style="margin-bottom:8px" />
+      <textarea id="sb-desc" placeholder="Description — shown to players when they get a character with this weapon" maxlength="240" style="width:100%;margin-bottom:0;min-height:70px"></textarea>
     </div>
 
     <div class="admin-section">
@@ -3678,6 +3586,9 @@
     animating = false;
     decrementFrozen();
     turn += 1; turnEl.textContent = String(turn).padStart(2, '0');
+    // Phase 5 v2: if we're in a test-ability practice run, fire any matched
+    // abilities at end of turn using a local mirror of the server evaluator.
+    if (typeof evaluatePracticeAbilities === 'function') evaluatePracticeAbilities();
     refreshArrows();
     refreshModeUI();
     refreshPossessionUI();
@@ -4646,8 +4557,15 @@
   function renderPlayerTileHTML(p, options){
     options = options || {};
     const eq = options.equippedSlot || '';
-    const w0 = abilityName(p.weapons && p.weapons[0]);
-    const w1 = abilityName(p.weapons && p.weapons[1]);
+    const w0Id = p.weapons && p.weapons[0];
+    const w1Id = p.weapons && p.weapons[1];
+    const w0 = abilityName(w0Id);
+    const w1 = abilityName(w1Id);
+    // Show the description for the first weapon the player holds. The
+    // description was authored in the Skill Builder and is the player-facing
+    // explanation of what the weapon does.
+    const firstAb = w0Id ? db.abilities[w0Id] : (w1Id ? db.abilities[w1Id] : null);
+    const desc = firstAb && firstAb.description ? firstAb.description : '';
     return `
       <div class="pname">${p.name}</div>
       <div class="pnum">#${p.num}</div>
@@ -4661,6 +4579,7 @@
         ${w0 ? `<span>${w0}</span>` : ''}
         ${w1 ? `<span>${w1}</span>` : ''}
       </div>
+      ${desc ? `<div class="pweap-desc">${escapeHtml(desc)}</div>` : ''}
     `;
   }
 
@@ -6302,9 +6221,6 @@
   const sbIdEl       = document.getElementById('sb-id');
   const sbNameEl     = document.getElementById('sb-name');
   const sbDescEl     = document.getElementById('sb-desc');
-  const sbTrigEl     = document.getElementById('sb-trigger');
-  const sbEffEl      = document.getElementById('sb-effect');
-  const sbMagEl      = document.getElementById('sb-magnitude');
   const sbMsgEl      = document.getElementById('sb-msg');
   const sbTitleEl    = document.getElementById('sb-form-title');
   const sbScopeOn    = document.getElementById('sb-scope-on');
@@ -6710,9 +6626,6 @@
     sbIdEl.value = '';
     sbNameEl.value = '';
     sbDescEl.value = '';
-    sbTrigEl.value = 'on-kick';
-    sbEffEl.value  = 'speed-boost';
-    sbMagEl.value  = '';
     sbMsgEl.textContent = '';
     sbTitleEl.textContent = 'New Ability';
     currentSkillConfig = defaultSkillConfig();
@@ -6722,9 +6635,6 @@
     sbIdEl.value = a.id;
     sbNameEl.value = a.name || '';
     sbDescEl.value = a.description || '';
-    sbTrigEl.value = a.trigger || 'on-kick';
-    sbEffEl.value  = a.effect  || 'speed-boost';
-    sbMagEl.value  = String(a.magnitude | 0);
     sbMsgEl.textContent = '';
     sbTitleEl.textContent = 'Edit Ability';
     // Defensive deep-copy of the saved config so edits don't mutate the cache.
@@ -6751,8 +6661,6 @@
       row.className = 'ability-row';
       const cfg = a.config || {};
       const pills = [];
-      pills.push(`<span class="effect-pill">${a.trigger}</span>`);
-      pills.push(`<span class="effect-pill">${a.effect} · ${a.magnitude}</span>`);
       if (cfg.scope) pills.push(`<span class="effect-pill">${cfg.scope}</span>`);
       if (cfg.cooldownTurns) pills.push(`<span class="effect-pill">cd ${cfg.cooldownTurns}t</span>`);
       const zones = (cfg.zones || []).length;
@@ -6823,9 +6731,11 @@
     const payload = {
       name,
       description: sbDescEl.value.trim() || null,
-      trigger: sbTrigEl.value,
-      effect:  sbEffEl.value,
-      magnitude: Math.max(0, parseInt(sbMagEl.value || '0', 10) | 0),
+      // Legacy DB columns are NOT NULL; we keep them inert with safe defaults.
+      // All real behavior now lives in `config`.
+      trigger: 'passive',
+      effect:  'none',
+      magnitude: 0,
       config: JSON.parse(JSON.stringify(currentSkillConfig))
     };
     const editingId = sbIdEl.value || '';
@@ -6855,339 +6765,228 @@
     } catch (e){ sbMsgEl.textContent = (e && e.message) || 'Save crashed.'; }
   }
 
-  // ── Phase 5: in-builder sandbox ──────────────────────────────────────
-  // Runs a CLIENT-SIDE mirror of the server's ability evaluator against a
-  // hand-arranged scenario, so admins can verify their ability fires before
-  // saving + putting it on a real player. No WS / matchmaking involved.
-  const sandboxOverlay     = document.getElementById('sandbox-overlay');
-  const sandboxPitch       = document.getElementById('sandbox-pitch');
-  const sandboxOwnerG      = document.getElementById('sandbox-owner');
-  const sandboxEnemyG      = document.getElementById('sandbox-enemy');
-  const sandboxBall        = document.getElementById('sandbox-ball');
-  const sandboxZonesLayer  = document.getElementById('sandbox-zones-layer');
-  const sandboxHasBall     = document.getElementById('sandbox-has-ball');
-  const sandboxClashWin    = document.getElementById('sandbox-clash-win');
-  const sandboxPlaceSection= document.getElementById('sandbox-place-section');
-  const sandboxPlaceChips  = document.getElementById('sandbox-place-chips');
-  const sandboxFireBtn     = document.getElementById('sandbox-fire');
-  const sandboxResetBtn    = document.getElementById('sandbox-reset');
-  const sandboxResultSec   = document.getElementById('sandbox-result-section');
-  const sandboxResultBody  = document.getElementById('sandbox-result-body');
-  const sandboxSubtitle    = document.getElementById('sandbox-subtitle');
+  // ── Phase 5 v2: Test Ability in Practice ────────────────────────────
+  // The Test Ability button no longer opens a separate sandbox. It equips
+  // the in-progress ability onto both teams' strikers and drops you into
+  // practice mode, where a local mirror of the server's evaluator fires
+  // the ability at the end of every turn so you can see it in action.
+  const TEST_ABILITY_ID = '__test_ability__';
+  let practiceTestActive = false;
+  let savedWeaponsForTest = null;
+  const practiceCooldowns = {};
+  let practiceClashWins = new Set();
 
-  const SANDBOX_W = 300, SANDBOX_H = 400;
-  // Sandbox state mirrors a minimal slice of match state.
-  const sandboxState = {
-    owner: { x: 150, y: 300 },
-    enemy: { x: 150, y: 100 },
-    ball:  { x: 150, y: 200 },
-    ownerHasBall: false,
-    clashWin: false,
-    placedZones: {}   // { [zoneId]: { x, y } }
-  };
-  let sandboxDrag = null;   // { kind: 'owner'|'enemy'|'ball', offsetX, offsetY }
-  let sandboxActivePlacement = null; // { zoneId, color, radius }
-
-  function sandboxPointFromEvent(e){
-    const r = sandboxPitch.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width)  * SANDBOX_W;
-    const y = ((e.clientY - r.top)  / r.height) * SANDBOX_H;
-    return { x: Math.max(8, Math.min(SANDBOX_W - 8, x)),
-             y: Math.max(8, Math.min(SANDBOX_H - 8, y)) };
+  function snapshotPlayerWeapons(){
+    const out = {};
+    for (const id in players) out[id] = (players[id].weapons || []).slice();
+    return out;
   }
-  function refreshSandboxPositions(){
-    sandboxOwnerG.setAttribute('transform', `translate(${sandboxState.owner.x.toFixed(1)}, ${sandboxState.owner.y.toFixed(1)})`);
-    sandboxEnemyG.setAttribute('transform', `translate(${sandboxState.enemy.x.toFixed(1)}, ${sandboxState.enemy.y.toFixed(1)})`);
-    if (sandboxState.ownerHasBall){
-      sandboxBall.setAttribute('cx', sandboxState.owner.x.toFixed(1));
-      sandboxBall.setAttribute('cy', (sandboxState.owner.y + 18).toFixed(1));
-    } else {
-      sandboxBall.setAttribute('cx', sandboxState.ball.x.toFixed(1));
-      sandboxBall.setAttribute('cy', sandboxState.ball.y.toFixed(1));
+  function restorePlayerWeapons(saved){
+    if (!saved) return;
+    for (const id in saved){
+      if (players[id]) players[id].weapons = saved[id].slice();
     }
   }
-  function refreshSandboxZones(){
-    while (sandboxZonesLayer.firstChild) sandboxZonesLayer.removeChild(sandboxZonesLayer.firstChild);
-    const cfg = currentSkillConfig || {};
-    const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
-    const svgNS = 'http://www.w3.org/2000/svg';
-    for (const z of zones){
-      if (!z) continue;
-      const center = sandboxZoneCenter(z);
-      if (!center) continue;
-      const c = document.createElementNS(svgNS, 'circle');
-      c.setAttribute('cx', center.x);
-      c.setAttribute('cy', center.y);
-      c.setAttribute('r',  z.radius | 0);
-      c.setAttribute('fill', z.color || '#ef2b3a');
-      c.setAttribute('fill-opacity', '0.12');
-      c.setAttribute('stroke', z.color || '#ef2b3a');
-      c.setAttribute('stroke-opacity', '0.6');
-      c.setAttribute('stroke-width', '1.5');
-      c.setAttribute('stroke-dasharray', '4 3');
-      sandboxZonesLayer.appendChild(c);
-    }
-  }
-  // Resolve a zone's center in sandbox coords. Mirrors server zoneCenter.
-  function sandboxZoneCenter(zone){
-    if (zone.placement === 'player-placed'){
-      const p = sandboxState.placedZones[zone.id];
-      return p ? { x: p.x, y: p.y } : null;
-    }
-    return {
-      x: sandboxState.owner.x + ((zone.offsetX | 0) || 0),
-      y: sandboxState.owner.y + ((zone.offsetY | 0) || 0)
+  function openPracticeTest(){
+    const name = (sbNameEl.value || '').trim();
+    if (!name){ sbMsgEl.textContent = 'Name is required before testing.'; return; }
+    const cfgErr = validateSkillConfig(currentSkillConfig);
+    if (cfgErr){ sbMsgEl.textContent = cfgErr; return; }
+    // Stash an in-memory ability under a reserved id. Saved abilities stay
+    // untouched; cleanup deletes this entry on exit.
+    db.abilities[TEST_ABILITY_ID] = {
+      id: TEST_ABILITY_ID,
+      name: name,
+      description: (sbDescEl.value || '').trim() || '',
+      trigger: 'passive', effect: 'none', magnitude: 0,
+      config: JSON.parse(JSON.stringify(currentSkillConfig))
     };
+    savedWeaponsForTest = snapshotPlayerWeapons();
+    // Equip on both strikers (p10 + p5) so the ability has a chance to fire
+    // from either side regardless of who has the ball.
+    for (const id of ['p10', 'p5']){
+      if (players[id]) players[id].weapons = [TEST_ABILITY_ID, (players[id].weapons && players[id].weapons[1]) || null];
+    }
+    // Reset eval state.
+    for (const k in practiceCooldowns) delete practiceCooldowns[k];
+    practiceClashWins = new Set();
+    practiceTestActive = true;
+    // Leave the admin overlays.
+    if (skillBuilderOverlay) skillBuilderOverlay.classList.remove('on');
+    if (adminOverlay) adminOverlay.classList.remove('on');
+    // Practice mode runs locally — no MP, no WS round trip.
+    startPractice();
+    // Render the test ability's fixed-offset zones immediately so the user
+    // sees where the requirement-zones sit on the field.
+    renderPracticeTestZones();
   }
-  function sandboxInZone(entity, zone, center){
-    if (!entity || !center) return false;
-    const dx = entity.x - center.x;
-    const dy = entity.y - center.y;
+  function endPracticeTest(){
+    if (!practiceTestActive) return;
+    practiceTestActive = false;
+    if (savedWeaponsForTest){ restorePlayerWeapons(savedWeaponsForTest); savedWeaponsForTest = null; }
+    delete db.abilities[TEST_ABILITY_ID];
+    for (const k in practiceCooldowns) delete practiceCooldowns[k];
+    practiceClashWins = new Set();
+    clearZones();
+    if (typeof refreshRosterUI === 'function') refreshRosterUI();
+  }
+  function computePracticeTestZones(){
+    if (!practiceTestActive) return [];
+    const ability = db.abilities[TEST_ABILITY_ID];
+    if (!ability || !ability.config) return [];
+    const zones = Array.isArray(ability.config.zones) ? ability.config.zones : [];
+    const out = [];
+    for (const pid in players){
+      const p = players[pid];
+      if (!p || !Array.isArray(p.weapons) || !p.weapons.includes(TEST_ABILITY_ID)) continue;
+      for (const z of zones){
+        if (!z || z.placement === 'player-placed') continue; // skipped in practice v1
+        out.push({
+          ownerId: pid, abilityId: TEST_ABILITY_ID, zoneId: z.id,
+          cx: p.x + ((z.offsetX | 0) || 0),
+          cy: p.y + ((z.offsetY | 0) || 0),
+          radius: (z.radius | 0) || 0,
+          color: z.color || '#ef2b3a'
+        });
+      }
+    }
+    return out;
+  }
+  function renderPracticeTestZones(){
+    renderZones(computePracticeTestZones());
+  }
+  // Local mirror of server's zone helpers.
+  function practiceZoneCenter(ownerId, zone){
+    const p = players[ownerId];
+    if (!p) return null;
+    return { x: p.x + ((zone.offsetX | 0) || 0), y: p.y + ((zone.offsetY | 0) || 0) };
+  }
+  function practiceInZone(pos, zone, center){
+    if (!pos || !center) return false;
+    const dx = pos.x - center.x, dy = pos.y - center.y;
     return Math.hypot(dx, dy) <= ((zone.radius | 0) || 0);
   }
-  function sandboxZoneTargetPresent(zone){
-    const center = sandboxZoneCenter(zone);
+  function practiceFindZoneTarget(ownerId, zone){
+    const center = practiceZoneCenter(ownerId, zone);
     if (!center) return null;
+    const ownerTeam = players[ownerId] && players[ownerId].team;
     const t = zone.target || 'enemy';
-    if (t === 'ball'){
-      const ballPos = sandboxState.ownerHasBall
-        ? { x: sandboxState.owner.x, y: sandboxState.owner.y + 18 }
-        : sandboxState.ball;
-      return sandboxInZone(ballPos, zone, center) ? 'ball' : null;
-    }
-    if (t === 'self')     return sandboxInZone(sandboxState.owner, zone, center) ? 'owner' : null;
-    if (t === 'teammate') return null; // sandbox has only one teammate (self)
-    if (t === 'enemy')    return sandboxInZone(sandboxState.enemy, zone, center) ? 'enemy' : null;
+    if (t === 'ball') return practiceInZone(ball, zone, center) ? 'ball' : null;
+    if (t === 'self') return practiceInZone(players[ownerId], zone, center) ? ownerId : null;
     if (t === 'enemy-with-ball'){
-      // The enemy can only "have the ball" if the owner doesn't.
-      if (sandboxState.ownerHasBall) return null;
-      return sandboxInZone(sandboxState.enemy, zone, center) ? 'enemy' : null;
+      if (!ballHolderId) return null;
+      if (players[ballHolderId].team === ownerTeam) return null;
+      return practiceInZone(players[ballHolderId], zone, center) ? ballHolderId : null;
+    }
+    for (const id in players){
+      if (id === ownerId) continue;
+      const sameTeam = players[id].team === ownerTeam;
+      if (t === 'teammate' && !sameTeam) continue;
+      if (t === 'enemy'    &&  sameTeam) continue;
+      if (practiceInZone(players[id], zone, center)) return id;
     }
     return null;
   }
-
-  function refreshSandboxPlaceChips(){
-    const cfg = currentSkillConfig || {};
-    const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
-    const placeable = zones.filter(z => z && z.placement === 'player-placed');
-    while (sandboxPlaceChips.firstChild) sandboxPlaceChips.removeChild(sandboxPlaceChips.firstChild);
-    if (placeable.length === 0){
-      sandboxPlaceSection.style.display = 'none';
-      return;
+  function practiceEvalReqs(ownerId, cfg){
+    const reqs = Array.isArray(cfg.requirements) ? cfg.requirements : [];
+    if (reqs.length === 0) return true;
+    for (const req of reqs){
+      if (req.kind === 'clash-and-win'){
+        if (!practiceClashWins.has(ownerId)) return false;
+      } else if (req.kind === 'zone'){
+        const zone = (cfg.zones || []).find(z => z && z.id === req.zoneId);
+        if (!zone) return false;
+        if (zone.placement === 'player-placed') return false; // practice v1 skips placed
+        if (!practiceFindZoneTarget(ownerId, zone)) return false;
+      } else {
+        return false;
+      }
     }
-    sandboxPlaceSection.style.display = '';
-    for (const z of placeable){
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'zone-chip' + (sandboxState.placedZones[z.id] ? ' placed' : '');
-      if (sandboxActivePlacement && sandboxActivePlacement.zoneId === z.id) chip.classList.add('active');
-      chip.style.color = z.color || '#ef2b3a';
-      const placed = !!sandboxState.placedZones[z.id];
-      chip.innerHTML = `<span class="swatch"></span>${escapeHtml(z.label || z.id)}<span class="state">${placed ? '✓' : 'TAP TO PLACE'}</span>`;
-      chip.addEventListener('click', () => {
-        if (sandboxActivePlacement && sandboxActivePlacement.zoneId === z.id){
-          sandboxActivePlacement = null;
-        } else {
-          sandboxActivePlacement = { zoneId: z.id, color: z.color, radius: z.radius };
+    return true;
+  }
+  function practiceFireRewards(ownerId, ability){
+    const cfg = ability.config || {};
+    const rewards = Array.isArray(cfg.rewards) ? cfg.rewards : [];
+    const applied = [];
+    for (const r of rewards){
+      if (!r || !r.kind) continue;
+      if (r.kind === 'stat-boost'){
+        applied.push({ kind: 'stat-boost', stat: r.stat, amount: r.amount });
+      } else if (r.kind === 'give-ball'){
+        ballHolderId = ownerId;
+        ballOffset = { x: 0, y: 32 };
+        ball.x = players[ownerId].x + ballOffset.x;
+        ball.y = players[ownerId].y + ballOffset.y;
+        mode = 'kick';
+        applied.push({ kind: 'give-ball' });
+      } else if (r.kind === 'teleport-to-ball'){
+        setPlayerPos(ownerId, ball.x, ball.y);
+        applied.push({ kind: 'teleport-to-ball' });
+      } else if (r.kind === 'teleport-to-zone'){
+        const zone = (cfg.zones || []).find(z => z && z.id === r.zoneId);
+        if (!zone || zone.placement === 'player-placed') continue;
+        const center = practiceZoneCenter(ownerId, zone);
+        if (!center) continue;
+        const nx = Math.max(20, Math.min(520, center.x));
+        const ny = Math.max(20, Math.min(780, center.y));
+        setPlayerPos(ownerId, nx, ny);
+        if (ballHolderId === ownerId){
+          ball.x = players[ownerId].x + ballOffset.x;
+          ball.y = players[ownerId].y + ballOffset.y;
         }
-        sandboxPitch.classList.toggle('placing-zone', !!sandboxActivePlacement);
-        refreshSandboxPlaceChips();
+        applied.push({ kind: 'teleport-to-zone', zoneId: r.zoneId });
+      } else if (r.kind === 'auto-clash'){
+        // Practice v1 doesn't trigger the local QTE flow — log as deferred.
+        applied.push({ kind: 'auto-clash', deferred: true });
+      }
+    }
+    return applied;
+  }
+  function evaluatePracticeAbilities(){
+    if (!practiceTestActive) return;
+    const ability = db.abilities[TEST_ABILITY_ID];
+    if (!ability) return;
+    const cfg = ability.config || {};
+    for (const pid in players){
+      const p = players[pid];
+      if (!Array.isArray(p.weapons) || !p.weapons.includes(TEST_ABILITY_ID)) continue;
+      if (practiceCooldowns[pid] && practiceCooldowns[pid][TEST_ABILITY_ID] > 0) continue;
+      if (cfg.scope === 'on-ball'  && ballHolderId !== pid) continue;
+      if (cfg.scope === 'off-ball' && ballHolderId === pid) continue;
+      if (!practiceEvalReqs(pid, cfg)) continue;
+      const applied = practiceFireRewards(pid, ability);
+      if (applied.length === 0) continue;
+      if (!practiceCooldowns[pid]) practiceCooldowns[pid] = {};
+      practiceCooldowns[pid][TEST_ABILITY_ID] = (cfg.cooldownTurns | 0) || 0;
+      flashAbilityFired({
+        type: 'ability-fired',
+        playerId: pid,
+        abilityId: TEST_ABILITY_ID,
+        abilityName: ability.name,
+        rewards: applied,
+        soundUrl:    cfg.soundUrl    || null,
+        cutsceneUrl: cfg.cutsceneUrl || null
       });
-      sandboxPlaceChips.appendChild(chip);
     }
-  }
-
-  function sandboxPointerDown(e){
-    if (!sandboxOverlay.classList.contains('on')) return;
-    e.preventDefault();
-    const p = sandboxPointFromEvent(e);
-    if (sandboxActivePlacement){
-      sandboxState.placedZones[sandboxActivePlacement.zoneId] = { x: p.x, y: p.y };
-      sandboxActivePlacement = null;
-      sandboxPitch.classList.remove('placing-zone');
-      refreshSandboxPlaceChips();
-      refreshSandboxZones();
-      return;
-    }
-    // Pick the nearest draggable within ~22px.
-    const cands = [
-      { kind: 'owner', x: sandboxState.owner.x, y: sandboxState.owner.y },
-      { kind: 'enemy', x: sandboxState.enemy.x, y: sandboxState.enemy.y },
-      { kind: 'ball',  x: sandboxState.ball.x,  y: sandboxState.ball.y  }
-    ];
-    let best = null, bestD = 22;
-    for (const c of cands){
-      const d = Math.hypot(p.x - c.x, p.y - c.y);
-      if (d < bestD){ best = c; bestD = d; }
-    }
-    if (!best) return;
-    sandboxDrag = { kind: best.kind };
-    try { sandboxPitch.setPointerCapture(e.pointerId); } catch(_){}
-  }
-  function sandboxPointerMove(e){
-    if (!sandboxDrag) return;
-    const p = sandboxPointFromEvent(e);
-    if (sandboxDrag.kind === 'owner') sandboxState.owner = { x: p.x, y: p.y };
-    else if (sandboxDrag.kind === 'enemy') sandboxState.enemy = { x: p.x, y: p.y };
-    else if (sandboxDrag.kind === 'ball')  sandboxState.ball  = { x: p.x, y: p.y };
-    refreshSandboxPositions();
-    refreshSandboxZones();
-  }
-  function sandboxPointerUp(e){
-    if (!sandboxDrag) return;
-    sandboxDrag = null;
-    try { sandboxPitch.releasePointerCapture(e.pointerId); } catch(_){}
-  }
-  sandboxPitch.addEventListener('pointerdown', sandboxPointerDown);
-  sandboxPitch.addEventListener('pointermove', sandboxPointerMove);
-  sandboxPitch.addEventListener('pointerup',   sandboxPointerUp);
-  sandboxPitch.addEventListener('pointercancel', sandboxPointerUp);
-
-  sandboxHasBall.addEventListener('change', () => {
-    sandboxState.ownerHasBall = !!sandboxHasBall.checked;
-    refreshSandboxPositions();
-    refreshSandboxZones();
-  });
-  sandboxClashWin.addEventListener('change', () => {
-    sandboxState.clashWin = !!sandboxClashWin.checked;
-  });
-
-  function resetSandboxScenario(){
-    sandboxState.owner = { x: 150, y: 300 };
-    sandboxState.enemy = { x: 150, y: 100 };
-    sandboxState.ball  = { x: 150, y: 200 };
-    sandboxState.ownerHasBall = false;
-    sandboxState.clashWin = false;
-    sandboxState.placedZones = {};
-    sandboxActivePlacement = null;
-    sandboxHasBall.checked = false;
-    sandboxClashWin.checked = false;
-    sandboxPitch.classList.remove('placing-zone');
-    sandboxResultSec.style.display = 'none';
-    refreshSandboxPositions();
-    refreshSandboxZones();
-    refreshSandboxPlaceChips();
-  }
-  sandboxResetBtn.addEventListener('click', resetSandboxScenario);
-
-  // ── Sandbox evaluator (mirror of server) ────────────────────────────
-  function runSandboxEvaluation(){
-    const cfg = currentSkillConfig || {};
-    const log = [];
-    const rewardLog = [];
-    let eligible = true;
-    let reqsMet = true;
-
-    // Scope.
-    if (cfg.scope === 'on-ball' && !sandboxState.ownerHasBall){
-      eligible = false;
-      log.push({ tag: 'SKIP', text: 'Scope is on-ball, but owner does not have the ball.' });
-    } else if (cfg.scope === 'off-ball' && sandboxState.ownerHasBall){
-      eligible = false;
-      log.push({ tag: 'SKIP', text: 'Scope is off-ball, but owner has the ball.' });
-    }
-
-    if (eligible){
-      const reqs = Array.isArray(cfg.requirements) ? cfg.requirements : [];
-      if (reqs.length === 0){
-        log.push({ tag: 'MET', text: 'No requirements — fires every cooldown.' });
-      }
-      for (const req of reqs){
-        if (req.kind === 'clash-and-win'){
-          const ok = !!sandboxState.clashWin;
-          log.push({ tag: ok ? 'MET' : 'UNMET', text: 'Clash and Win' + (ok ? '' : ' (toggle the modifier to test)') });
-          if (!ok) reqsMet = false;
-        } else if (req.kind === 'zone'){
-          const zone = (cfg.zones || []).find(z => z && z.id === req.zoneId);
-          if (!zone){
-            log.push({ tag: 'UNMET', text: `Zone "${req.zoneId}" missing.` });
-            reqsMet = false; continue;
-          }
-          if (zone.placement === 'player-placed' && !sandboxState.placedZones[zone.id]){
-            log.push({ tag: 'UNMET', text: `Player-placed zone "${zone.label || zone.id}" not dropped yet.` });
-            reqsMet = false; continue;
-          }
-          const hit = sandboxZoneTargetPresent(zone);
-          if (hit){
-            log.push({ tag: 'MET', text: `${zone.target} found in zone "${zone.label || zone.id}".` });
-          } else {
-            log.push({ tag: 'UNMET', text: `No ${zone.target} in zone "${zone.label || zone.id}".` });
-            reqsMet = false;
-          }
-        } else {
-          log.push({ tag: 'UNMET', text: `Unknown requirement kind "${req.kind}".` });
-          reqsMet = false;
-        }
+    // Decrement cooldowns for next turn.
+    for (const pid in practiceCooldowns){
+      for (const aid in practiceCooldowns[pid]){
+        practiceCooldowns[pid][aid] = Math.max(0, practiceCooldowns[pid][aid] - 1);
       }
     }
-
-    if (eligible && reqsMet){
-      const rewards = Array.isArray(cfg.rewards) ? cfg.rewards : [];
-      if (rewards.length === 0){
-        rewardLog.push({ tag: 'SKIP', text: 'No rewards — ability would fire but do nothing.' });
-      }
-      for (const r of rewards){
-        if (r.kind === 'stat-boost'){
-          rewardLog.push({ tag: 'REWARD', text: `Stat boost: ${r.stat} ${r.amount > 0 ? '+' : ''}${r.amount}` });
-        } else if (r.kind === 'give-ball'){
-          rewardLog.push({ tag: 'REWARD', text: 'Owner is given the ball.' });
-        } else if (r.kind === 'teleport-to-ball'){
-          rewardLog.push({ tag: 'REWARD', text: `Owner teleports to the ball at (${Math.round(sandboxState.ball.x)}, ${Math.round(sandboxState.ball.y)}).` });
-        } else if (r.kind === 'teleport-to-zone'){
-          const zone = (cfg.zones || []).find(z => z && z.id === r.zoneId);
-          if (!zone){
-            rewardLog.push({ tag: 'SKIP', text: `teleport-to-zone target zone "${r.zoneId}" missing.` });
-          } else {
-            const c = sandboxZoneCenter(zone);
-            if (!c) rewardLog.push({ tag: 'SKIP', text: `Zone "${zone.label || zone.id}" has no center (unplaced).` });
-            else    rewardLog.push({ tag: 'REWARD', text: `Owner teleports to zone "${zone.label || zone.id}" at (${Math.round(c.x)}, ${Math.round(c.y)}).` });
-          }
-        } else if (r.kind === 'auto-clash'){
-          const zone = (cfg.zones || []).find(z => z && z.id === r.zoneId);
-          if (!zone){
-            rewardLog.push({ tag: 'SKIP', text: `auto-clash target zone "${r.zoneId}" missing.` });
-          } else {
-            const target = sandboxZoneTargetPresent(zone);
-            if (target === 'enemy') rewardLog.push({ tag: 'REWARD', text: `Auto-clash starts vs the enemy in zone "${zone.label || zone.id}".` });
-            else                     rewardLog.push({ tag: 'SKIP', text: `auto-clash needs an enemy in zone "${zone.label || zone.id}" (got ${target || 'nothing'}).` });
-          }
-        } else {
-          rewardLog.push({ tag: 'SKIP', text: `Unknown reward kind "${r.kind}".` });
-        }
-      }
-    }
-
-    // Render results.
-    sandboxResultSec.style.display = '';
-    const header = (eligible && reqsMet)
-      ? '<div style="color:#4ade80;font-weight:700;letter-spacing:0.18em;margin-bottom:8px">ABILITY FIRES</div>'
-      : '<div style="color:var(--red);font-weight:700;letter-spacing:0.18em;margin-bottom:8px">ABILITY DOES NOT FIRE</div>';
-    const html = [header, '<div style="color:var(--ink-dim);text-transform:uppercase;font-size:9px;letter-spacing:0.22em;margin:6px 0 4px">Eligibility & Requirements</div>'];
-    for (const e of log){
-      html.push(`<div class="row"><span class="tag ${e.tag === 'MET' ? 'met' : (e.tag === 'UNMET' ? 'unmet' : 'skip')}">${e.tag}</span><span>${escapeHtml(e.text)}</span></div>`);
-    }
-    if (eligible && reqsMet){
-      html.push('<div style="color:var(--ink-dim);text-transform:uppercase;font-size:9px;letter-spacing:0.22em;margin:10px 0 4px">Rewards</div>');
-      for (const e of rewardLog){
-        html.push(`<div class="row"><span class="tag ${e.tag === 'REWARD' ? 'reward' : 'skip'}">${e.tag}</span><span>${escapeHtml(e.text)}</span></div>`);
-      }
-    }
-    sandboxResultBody.innerHTML = html.join('');
+    practiceClashWins = new Set();
+    // Refresh zone overlay (zones follow players who moved).
+    renderPracticeTestZones();
   }
-  sandboxFireBtn.addEventListener('click', runSandboxEvaluation);
-
-  function openSandbox(){
-    sandboxSubtitle.textContent = (sbNameEl.value || '').trim()
-      ? `Testing: "${sbNameEl.value.trim()}"`
-      : 'Drag the players + ball, then press Fire Turn.';
-    resetSandboxScenario();
-    sandboxOverlay.classList.add('on');
+  document.getElementById('sb-test').addEventListener('click', openPracticeTest);
+  // Tear down the test mode whenever the user opens the menu (the only way
+  // out of practice). This sits alongside the existing menuBtn → showMainMenu
+  // listener and doesn't interfere with it.
+  if (typeof menuBtn !== 'undefined' && menuBtn){
+    menuBtn.addEventListener('click', () => {
+      if (practiceTestActive) endPracticeTest();
+    });
   }
-  function closeSandbox(){
-    sandboxOverlay.classList.remove('on');
-  }
-  document.getElementById('sb-test').addEventListener('click', openSandbox);
-  document.getElementById('sandbox-close').addEventListener('click', closeSandbox);
 
   document.getElementById('sb-save').addEventListener('click', saveSkillFromForm);
   document.getElementById('sb-clear').addEventListener('click', clearSkillForm);

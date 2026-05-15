@@ -17,6 +17,11 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Changed
+- The Skill Builder form is simplified to just Name and Description. The legacy Trigger, Effect, and Magnitude fields are gone — all real behavior lives in the existing Behavior / Zones / Requirements / Rewards sections.
+- The Description field is now player-facing: it appears on the player tile of any character that holds the weapon, in a gold-bordered callout below the weapon name. This is what players see when they get a character with the weapon.
+- The Test Ability button no longer opens a separate sandbox. It now equips your in-progress ability onto both teams' strikers and drops you straight into a practice match. A local evaluator mirrors the server's ability logic, so abilities fire at the end of each practice turn with the same flash, sound, and cutscene as in a real game. Leaving practice via the menu cleans up automatically — your real player rosters aren't touched.
+
 ### Added
 - Phase 5 of the Skill Builder: an in-builder sandbox to test your ability before saving it. A new "Test Ability" button in the editor opens a small test pitch with a draggable Owner, Enemy, and Ball. Toggles for "Owner has ball" and "Owner won a clash this turn" let you exercise the on-ball/off-ball gating and the Clash and Win requirement. Player-placed zones use the same chip-to-drop flow as in a real match. Press Fire Turn to see exactly which requirements met, which ones didn't, and which rewards would activate — no live match required.
 - Phase 3c of the Skill Builder: player-placed zones. When one of your equipped abilities has a zone set to "Player Places", a chip appears above the field during planning. Tap a chip, then click anywhere on the pitch to drop that zone. The zone shows immediately. On lock-in, your placements travel with your moves and get evaluated like any other zone. Placements reset every turn — you re-drop them each planning phase.
