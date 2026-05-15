@@ -5734,9 +5734,15 @@
       }
       case 'clash-start': {
         if (!mpMatchStarted || !msg.ctx) break;
-        // Defensive: a leftover `clash` from a previous round (e.g. a dropped
-        // clash-dismiss, or a WS hiccup) used to make us silently skip this.
-        // Now we always tear down stale state before starting fresh.
+        // If we're already in the EXACT same clash (same mover + opponent),
+        // ignore the duplicate broadcast — restarting the QTE would wipe the
+        // local round counter and cause the "loop forever, get auto-zero" bug.
+        if (clash && clash.ctx
+            && clash.ctx.moverId    === msg.ctx.moverId
+            && clash.ctx.opponentId === msg.ctx.opponentId){
+          break;
+        }
+        // Different clash (or no current one) — tear down stale state first.
         if (clash){
           if (clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
           if (clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
@@ -6186,36 +6192,43 @@
         : null;
     }
     mpOpponentAimsLocked = null;
-    // Always tear down any stale clash UI on (re)entry.
-    if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
-    if (clash && clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
-    if (clash && clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
-    clash = null;
-    if (qteOverlay) qteOverlay.classList.remove('on');
+    // Preserve an in-progress clash if the server is reporting the SAME one
+    // we're already running. Tearing it down + restarting would wipe the
+    // local round counter, the user would re-submit scores the server has
+    // already accepted, and they'd never make progress — exactly the
+    // "auto-zero looping" bug.
+    const incomingCtx = msg.clash && msg.clash.ctx;
+    const sameClashAsLocal = clash && clash.ctx && incomingCtx
+      && clash.ctx.moverId    === incomingCtx.moverId
+      && clash.ctx.opponentId === incomingCtx.opponentId;
+    if (!sameClashAsLocal){
+      if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
+      if (clash && clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
+      if (clash && clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
+      clash = null;
+      if (qteOverlay) qteOverlay.classList.remove('on');
+    }
     if (msg.state) applyTurnState(msg.state);
-    // applyTurnState overwrites `mode` from the snapshot. On a same-turn
-    // resume during planning, that would clobber the user's dribble/kick
-    // selection — so restore what they had.
     if (isResumeSameTurn) mode = localModeBeforeResume;
-    // If the server is mid-clash, rebuild the clash overlay so the resuming
-    // player can participate instead of leaving the opponent waiting.
-    if (msg.clash && msg.clash.ctx){
-      startClash(msg.clash.ctx);
-      if (msg.clash.resolved){
-        // Server already computed the outcome — jump straight to the result
-        // screen. The user just taps continue.
-        clash.resolved = msg.clash.resolved;
-        const out = msg.clash.resolved;
-        const totalUs   = (typeof out.totalUs   === 'number') ? out.totalUs   : 0;
-        const totalThem = (typeof out.totalThem === 'number') ? out.totalThem : 0;
-        if (qteTotalUs)   qteTotalUs.textContent   = totalUs;
-        if (qteTotalThem) qteTotalThem.textContent = totalThem;
-        if (qtePrompt){
-          qtePrompt.innerHTML = `<strong>${totalUs} : ${totalThem}</strong> · #${players[out.winnerId] ? players[out.winnerId].num : '?'} wins the clash. Tap to continue.`;
-          qtePrompt.classList.add('result');
-        }
-        if (qteSub) qteSub.textContent = 'Clash resolved';
+    // If the server is mid-clash AND we don't already have that exact clash
+    // open locally, build the QTE overlay so we can participate.
+    if (incomingCtx && !sameClashAsLocal){
+      startClash(incomingCtx);
+    }
+    // Either way: if the server says the clash is RESOLVED, jump to the
+    // outcome screen even if we were mid-rounds (server's view wins).
+    if (msg.clash && msg.clash.resolved && clash){
+      clash.resolved = msg.clash.resolved;
+      const out = msg.clash.resolved;
+      const totalUs   = (typeof out.totalUs   === 'number') ? out.totalUs   : 0;
+      const totalThem = (typeof out.totalThem === 'number') ? out.totalThem : 0;
+      if (qteTotalUs)   qteTotalUs.textContent   = totalUs;
+      if (qteTotalThem) qteTotalThem.textContent = totalThem;
+      if (qtePrompt){
+        qtePrompt.innerHTML = `<strong>${totalUs} : ${totalThem}</strong> · #${players[out.winnerId] ? players[out.winnerId].num : '?'} wins the clash. Tap to continue.`;
+        qtePrompt.classList.add('result');
       }
+      if (qteSub) qteSub.textContent = 'Clash resolved';
     }
     buildRoster();
     refreshRosterUI();

@@ -17,6 +17,10 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Fixed
+- Clashes no longer loop forever with auto-zeros. If your WebSocket briefly drops mid-clash (mobile tabs throttling, a network blip, etc.), reconnecting now keeps your local QTE progress intact instead of restarting the rounds. Your previously submitted scores stay on the server and the same clash continues from where you left off.
+- The server's idle-connection killer is more forgiving — it allows up to 3 missed pings (~75 seconds of silence) before terminating a client, so a backgrounded tab no longer gets kicked the moment its tab loses focus.
+
 ### Added
 - Weapons are now activated, not passive. During planning, tap the weapon button next to Kick / Dribble to flag the ability for use this turn. The button shows the weapon's name (or "None" when no usable weapon is equipped for the current ball state), and highlights gold when activated.
 - The action row stays visible even when the selected player doesn't have the ball, so you can prep off-ball weapons.

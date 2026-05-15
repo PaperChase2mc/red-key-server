@@ -910,6 +910,43 @@ async function testPlacedZoneSkipsWhenUnplaced(){
   a.close(); b.close();
 }
 
+async function testMidClashReconnectKeepsScores(){
+  // Trigger a clash, both clients submit some rounds, then one reconnects.
+  // The server must still have the prior scores, and the same ctx must be
+  // reported so the client can preserve its local round counter.
+  const { a, b, matchA, matchB } = await newMatch();
+  a.send({ type: 'aims', ...aimsForcingClash(matchA) });
+  b.send({ type: 'aims', ...aimsForcingClash(matchB) });
+  await a.expect('clash-start', 5000);
+  await b.expect('clash-start', 5000);
+  // A submits rounds 1 + 2.
+  a.send({ type: 'qte-score', round: 1, score: 50 });
+  a.send({ type: 'qte-score', round: 2, score: 50 });
+  // B submits all three.
+  b.send({ type: 'qte-score', round: 1, score: 50 });
+  b.send({ type: 'qte-score', round: 2, score: 50 });
+  b.send({ type: 'qte-score', round: 3, score: 50 });
+  // A bounces mid-clash. Reconnect, resume.
+  a.close();
+  await sleep(150);
+  const a2 = new TestClient(a.username);
+  await a2.open();
+  a2.hello();
+  await a2.expect('welcome');
+  const resumed = await a2.expect('match-start', 3000);
+  // Server must still report the SAME clash ctx.
+  if (!resumed.clash || !resumed.clash.ctx){
+    throw new Error('resume should include the active clash');
+  }
+  // Now A finishes round 3. Server should accept it because rounds 1 and 2
+  // were never lost — they were stored before the disconnect.
+  a2.send({ type: 'qte-score', round: 3, score: 50 });
+  // With all 6 scores in, server resolves the clash.
+  const outcome = await a2.expect('clash-outcome', 3000);
+  if (!outcome.outcome) throw new Error('expected outcome');
+  a2.close(); b.close();
+}
+
 async function testActivationGate(){
   // Phase 6: abilities no longer auto-fire — they must be activated. If the
   // player doesn't include the ability in `activations`, nothing fires even
@@ -1036,7 +1073,8 @@ const SCENARIOS = [
   ['ability: player-placed zone fires when placed',   testPlacedZoneFiresWhenPlaced],
   ['ability: player-placed zone skips when unplaced', testPlacedZoneSkipsWhenUnplaced],
   ['ability: activation gate — no activation, no fire',testActivationGate],
-  ['ability: appliesNext defers reward by one turn',  testAppliesNextDefersReward]
+  ['ability: appliesNext defers reward by one turn',  testAppliesNextDefersReward],
+  ['clash: mid-clash reconnect keeps prior scores',   testMidClashReconnectKeepsScores]
 ];
 
 async function main(){

@@ -1346,14 +1346,19 @@ wss.on('connection', (ws) => {
 });
 
 // Heartbeat: idle WebSockets get killed by upstream load balancers (Render's
-// default is ~110s with no traffic). The planning phase routinely sits idle
-// for up to 60s, which is well within "let's kill it" territory. Ping every
-// 25s; if a client misses two pongs in a row, drop them.
+// default is ~110s with no traffic). Ping every 25s. Mobile tabs throttle in
+// the background, so we allow up to 3 missed pings (~75s of unresponsiveness)
+// before terminating — that keeps Render happy without nuking a flaky tab.
 setInterval(() => {
   for (const ws of wss.clients){
-    if (ws.isAlive === false){
-      try { ws.terminate(); } catch(_){}
-      continue;
+    if (!ws.isAlive){
+      ws._missedPongs = (ws._missedPongs | 0) + 1;
+      if (ws._missedPongs >= 3){
+        try { ws.terminate(); } catch(_){}
+        continue;
+      }
+    } else {
+      ws._missedPongs = 0;
     }
     ws.isAlive = false;
     try { ws.ping(); } catch(_){}
