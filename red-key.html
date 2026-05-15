@@ -973,6 +973,26 @@
   .qte-rounds-list span{padding: 0 4px}
   .qte-rounds-list span.win{color: #22c55e}
   .qte-rounds-list span.lose{color: var(--red)}
+  /* Safety-valve Quit Match button inside the clash overlay. */
+  .qte-quit-btn{
+    display: block;
+    margin: 14px auto 0;
+    padding: 8px 16px;
+    border: 1px solid var(--red-deep);
+    background: transparent;
+    color: var(--red);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-weight: 700;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .qte-quit-btn:hover{
+    background: var(--red-deep);
+    color: var(--ink);
+    border-color: var(--red);
+  }
   .qte-prompt{
     font-family:"Saira Condensed", sans-serif;
     font-weight: 700;font-size: 12px;
@@ -2366,6 +2386,7 @@
     </div>
     <div class="qte-rounds-list" id="qte-rounds-list"></div>
     <div class="qte-prompt" id="qte-prompt">Click or press <kbd>Space</kbd> to lock the bar.</div>
+    <button class="qte-quit-btn" id="qte-quit-btn" type="button">Quit Match</button>
   </div>
 </div>
 
@@ -4237,11 +4258,17 @@
     // notify the server that we're ready to advance and let it close the UI.
     if (mpMatchStarted){
       if (!clash.resolved) return; // wait for server's clash-outcome
-      // Allow re-tapping: if the first dismiss got dropped (slow link, server
-      // hiccup), the user can tap again and we'll resend. The server is
-      // idempotent — once it applies the outcome and broadcasts, repeat
-      // dismisses are quietly ignored.
       wsSend({ type: 'clash-dismiss' });
+      // Safety net: if the server's clash-dismiss broadcast never makes it
+      // back to us (server already cleared the clash, the broadcast got
+      // dropped, etc.), close the overlay locally after 2s so we're never
+      // trapped on "click to continue". The server's broadcast is idempotent.
+      if (clash._dismissTimer) clearTimeout(clash._dismissTimer);
+      clash._dismissTimer = setTimeout(() => {
+        if (qteOverlay) qteOverlay.classList.remove('on');
+        if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
+        clash = null;
+      }, 2000);
       return;
     }
     // Practice (single-player) path
@@ -4324,6 +4351,24 @@
     }
   }
   qteOverlay.addEventListener('click', qteInput);
+  // Emergency Quit Match button inside the clash overlay — bypasses the
+  // QTE/dismiss logic entirely. stopPropagation prevents the surrounding
+  // click-anywhere-to-continue handler from also firing.
+  const qteQuitBtn = document.getElementById('qte-quit-btn');
+  if (qteQuitBtn){
+    qteQuitBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!mpMatchStarted) return;
+      const ok = confirm('Forfeit this match? You will lose and earn 0 keys.');
+      if (!ok) return;
+      // Close the clash overlay locally so the user isn't trapped on it
+      // while the match-end round-trip lands.
+      if (qteOverlay) qteOverlay.classList.remove('on');
+      if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
+      clash = null;
+      forceLoseMatch();
+    });
+  }
 
   // ── Key binding (rebindable) ─────────────────────────
   function friendlyKey(code){
@@ -5789,6 +5834,7 @@
         if (clash && clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
         if (clash && clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
         if (clash && clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
+        if (clash && clash._dismissTimer){ clearTimeout(clash._dismissTimer); }
         clash = null;
         break;
       }

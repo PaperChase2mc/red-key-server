@@ -17,7 +17,11 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Added
+- Quit Match button inside the clash overlay. If the clash bugs out or you just need to bail mid-QTE, you can forfeit without waiting for the round to finish. Confirms before quitting; click does not trigger the dismiss handler underneath it.
+
 ### Fixed
+- "Click to continue" after a clash now reliably dismisses. If the server's response is missed (lost packet, server already cleared the clash, etc.), the overlay closes locally after a 2-second safety timeout so you're never trapped.
 - Clashes no longer loop forever with auto-zeros. If your WebSocket briefly drops mid-clash (mobile tabs throttling, a network blip, etc.), reconnecting now keeps your local QTE progress intact instead of restarting the rounds. Your previously submitted scores stay on the server and the same clash continues from where you left off.
 - The server's idle-connection killer is more forgiving — it allows up to 3 missed pings (~75 seconds of silence) before terminating a client, so a backgrounded tab no longer gets kicked the moment its tab loses focus.
 
