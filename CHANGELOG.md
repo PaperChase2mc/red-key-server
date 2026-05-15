@@ -18,6 +18,7 @@ All notable changes to Red Key. Most recent first.
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
 ### Fixed
+- Missing a clash round (letting the ring fully shrink without tapping) no longer leaves you stuck waiting forever for the opponent. The client now re-sends your round score every two seconds until the server confirms the round advanced — which fixes the silent-drop case where the WebSocket was momentarily unavailable when the auto-miss fired. The server's score handler is idempotent so duplicate sends are harmless.
 - The website was completely broken after the clash rewrite — `pendingClash` got declared twice (once in the new clash block, once in the existing turn-state block from before), which is a fatal SyntaxError in strict ES modules. The entire game script failed to parse, so nothing on the page worked: no auth, no menu, no settings, no multiplayer. Removed the duplicate declaration.
 
 ### Changed

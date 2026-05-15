@@ -7,9 +7,11 @@
 //
 // Run with: `npm test` (or `node test/harness.mjs`).
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import WebSocket from 'ws';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -926,6 +928,28 @@ async function testPlacedZoneSkipsWhenUnplaced(){
   a.close(); b.close();
 }
 
+async function testClashMissCounts(){
+  // Verifies that a miss (score = 0) is accepted by the server just like a
+  // normal lock-in. If both players miss every round the clash still resolves;
+  // no infinite wait.
+  const { a, b, matchA, matchB } = await newMatch();
+  a.send({ type: 'aims', ...aimsForcingClash(matchA) });
+  b.send({ type: 'aims', ...aimsForcingClash(matchB) });
+  await a.expect('clash-start', 8000);
+  await b.expect('clash-start', 8000);
+  for (let round = 1; round <= 3; round++){
+    a.send({ type: 'qte-score', round, score: 0 });
+    b.send({ type: 'qte-score', round, score: 0 });
+    if (round < 3){
+      await a.expect('clash-round-next', 3000);
+      await b.expect('clash-round-next', 3000);
+    }
+  }
+  await a.expect('clash-outcome', 3000);
+  await b.expect('clash-outcome', 3000);
+  a.close(); b.close();
+}
+
 async function testMidClashReconnectKeepsScores(){
   // Walk rounds 1 + 2 normally (both sides submit, server advances). Before
   // round 3, A bounces. Server still has rounds 1+2 stored for A. After
@@ -1100,10 +1124,31 @@ const SCENARIOS = [
   ['ability: player-placed zone skips when unplaced', testPlacedZoneSkipsWhenUnplaced],
   ['ability: activation gate — no activation, no fire',testActivationGate],
   ['ability: appliesNext defers reward by one turn',  testAppliesNextDefersReward],
-  ['clash: mid-clash reconnect keeps prior scores',   testMidClashReconnectKeepsScores]
+  ['clash: mid-clash reconnect keeps prior scores',   testMidClashReconnectKeepsScores],
+  ['clash: missed rounds (score 0) still advance',    testClashMissCounts]
 ];
 
+// Static syntax check of red-key.html's inline JS. Catches client-side
+// SyntaxErrors (e.g. duplicate `let` declarations) before they reach a
+// browser. The harness otherwise only exercises the server.
+function checkClientScriptSyntax(){
+  const htmlPath = join(__dirname, '..', 'red-key.html');
+  const html = readFileSync(htmlPath, 'utf8');
+  const m = html.match(/<script>\n([\s\S]*?)\n<\/script>/);
+  if (!m){ throw new Error('Could not locate inline <script> block in red-key.html'); }
+  const dir = mkdtempSync(join(tmpdir(), 'redkey-check-'));
+  const file = join(dir, 'inline.mjs');
+  writeFileSync(file, m[1]);
+  const res = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+  if (res.status !== 0){
+    throw new Error('Client inline script syntax error:\n' + (res.stderr || res.stdout || '(no detail)'));
+  }
+}
+
 async function main(){
+  console.log('Syntax-checking red-key.html inline script...');
+  try { checkClientScriptSyntax(); console.log('  OK'); }
+  catch (e){ console.error(e.message || e); process.exit(2); }
   console.log('Starting server on port ' + PORT + '...');
   await startServer();
   console.log('Server ready. Running ' + SCENARIOS.length + ' scenarios.\n');

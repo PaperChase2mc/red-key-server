@@ -4195,8 +4195,26 @@
     }
     if (mpMatchStarted){
       // Stream the score to the server and wait for clash-round-next or
-      // clash-outcome.
-      wsSend({ type: 'qte-score', round: clash.currentRound + 1, score });
+      // clash-outcome. Retry every 2s in case wsSend silently dropped
+      // (tab was briefly backgrounded, transient disconnect, etc.) — the
+      // server's handleQteScore is idempotent (per-round aDone/bDone), so
+      // duplicate sends are safe.
+      const sendRound = clash.currentRound;
+      const sendScore = score;
+      const fire = () => {
+        if (!clash || clash.currentRound !== sendRound) return; // server advanced
+        wsSend({ type: 'qte-score', round: sendRound + 1, score: sendScore });
+      };
+      fire();
+      if (clash._scoreRetryTimer) clearInterval(clash._scoreRetryTimer);
+      clash._scoreRetryTimer = setInterval(() => {
+        if (!clash || clash.currentRound !== sendRound){
+          clearInterval(clash._scoreRetryTimer);
+          clash._scoreRetryTimer = null;
+          return;
+        }
+        fire();
+      }, 2000);
       if (qteRingStage) qteRingStage.classList.add('waiting');
       if (qtePrompt) qtePrompt.innerHTML = `Round ${clash.currentRound + 1}: <strong>${timedOut ? 'missed' : 'locked'}</strong> · waiting for opponent…`;
     } else {
@@ -4222,6 +4240,10 @@
   // Server says everyone finished this round — advance.
   function advanceClashRound(roundNum1Based){
     if (!clash) return;
+    if (clash._scoreRetryTimer){
+      clearInterval(clash._scoreRetryTimer);
+      clash._scoreRetryTimer = null;
+    }
     if (qteRingStage) qteRingStage.classList.remove('waiting');
     startRound(roundNum1Based - 1);
   }
@@ -4238,6 +4260,7 @@
     if (!clash) return;
     clash.resolved = outcome;
     if (clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} clash.raf = null; }
+    if (clash._scoreRetryTimer){ clearInterval(clash._scoreRetryTimer); clash._scoreRetryTimer = null; }
     if (qteRingStage){
       qteRingStage.classList.remove('waiting');
       qteRingStage.classList.add('locked');
@@ -5932,6 +5955,7 @@
         if (clash && clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
         if (clash && clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
         if (clash && clash._dismissTimer){ clearTimeout(clash._dismissTimer); }
+        if (clash && clash._scoreRetryTimer){ clearInterval(clash._scoreRetryTimer); }
         clash = null;
         break;
       }
