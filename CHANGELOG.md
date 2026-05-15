@@ -17,6 +17,9 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Changed
+- New clashing system. When two opposing players collide during a turn's animation, you see a flash and a lingering ✕ where they hit; both players freeze in place at the collision point while the rest of the animation plays out. The QTE itself runs AFTER the animation finishes, between turns. The old sweeping-cursor bar is gone — the new QTE is a hollow ring that shrinks toward a target dot. Tap or press Space when the ring is at its smallest for max score. Three rounds, with speeds randomized but synced between both players (you both see the same speed for the same round). If one player finishes a round before the other, they wait for the other before round 2 begins. After all three rounds, the higher total wins the clash; the loser is thrown in a random direction and frozen for one turn.
+
 ### Added
 - Quit Match button inside the clash overlay. If the clash bugs out or you just need to bail mid-QTE, you can forfeit without waiting for the round to finish. Confirms before quitting; click does not trigger the dismiss handler underneath it.
 

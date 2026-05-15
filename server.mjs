@@ -190,11 +190,16 @@ function buildMatchStart(match, role){
   const opp = role === 'us' ? match.playerB : match.playerA;
   // If there's an active clash on the server, tell the resuming client about
   // it so they can rebuild the QTE overlay instead of being stuck on the
-  // field while the opponent waits.
+  // field while the opponent waits. The new format carries everything the
+  // client needs to drop back into the right round at the right pace.
   let clashInfo = null;
   if (match.clash){
     clashInfo = {
       ctx: match.clash.ctx,
+      roundSpeeds: match.clash.roundSpeeds || [],
+      currentRound: match.clash.currentRound | 0,
+      scoresA: (match.clash.scoresA || []).slice(),
+      scoresB: (match.clash.scoresB || []).slice(),
       resolved: match.clash.resolved || null
     };
   }
@@ -432,26 +437,19 @@ function startTurnAnimation(match){
 // ── Tick the simulation for one match ──────────────────────────────────────
 function tickMatch(match){
   if (!match.animating) return;
-  if (match.clash) return; // QTE owns the floor
+  if (match.clash) return; // QTE owns the floor (post-animation)
 
   const r = match.runtime;
   if (!r) return;
 
   const now = Date.now();
-  if (r.clashQueue.length > 0){
-    r.pauseStartedAt = now;
-    const ctx = r.clashQueue.shift();
-    match.clash = { ctx, scoresA: [], scoresB: [], resolved: null };
-    broadcastMatch(match, { type: 'clash-start', ctx });
-    return;
-  }
+  const elapsed = now - r.t0;
 
-  const elapsed = now - r.t0 - r.pauseDuration;
-
-  // Update mover positions (skip clashing players — they freeze at impact)
+  // Update mover positions. Players already in a clash freeze where they
+  // collided; the animation continues for everyone else.
   let allRunsDone = true;
   for (const run of r.runs){
-    if (r.activeClashIds.has(run.moverId)){ allRunsDone = false; continue; }
+    if (r.activeClashIds.has(run.moverId)) continue; // frozen, treat as done
     const dur = RUN_DUR / Math.max(0.1, speedFactor(match, run.moverId));
     const k = Math.min(1, elapsed / dur);
     const ek = 1 - Math.pow(1 - k, 3);
@@ -461,7 +459,9 @@ function tickMatch(match){
     if (k < 1) allRunsDone = false;
   }
 
-  // Clash detection (pairwise, opposite-team only)
+  // Clash detection. Pairs that collide stop in place + get broadcast as a
+  // "clash-marker" for visual feedback, but the QTE doesn't start yet —
+  // it waits until the animation finishes.
   for (const run of r.runs){
     const mover = match.players[run.moverId];
     if (r.activeClashIds.has(mover.id)) continue;
@@ -480,10 +480,16 @@ function tickMatch(match){
         r.activeClashIds.add(id);
         r.resolvedPairs.add(key);
         r.clashQueue.push({ moverId: mover.id, opponentId: id });
+        broadcastMatch(match, {
+          type: 'clash-marker',
+          moverId: mover.id,
+          opponentId: id,
+          x: round1((mover.x + other.x) / 2),
+          y: round1((mover.y + other.y) / 2)
+        });
       }
     }
   }
-  if (r.clashQueue.length > 0) return; // drain on next tick
 
   // Step ball
   let ballDone = !r.ballState || !r.ballState.moving;
@@ -553,15 +559,47 @@ function tickMatch(match){
     return;
   }
 
-  const noClashesPending = r.clashQueue.length === 0 && r.activeClashIds.size === 0;
-  if (allRunsDone && ballDone && noClashesPending){
-    // Snap final positions
+  if (allRunsDone && ballDone){
+    // Snap final positions for non-clashing players. Clashing players stay
+    // wherever they collided.
     for (const run of r.runs){
+      if (r.activeClashIds.has(run.moverId)) continue;
       match.players[run.moverId].x = run.endPos.x;
       match.players[run.moverId].y = run.endPos.y;
     }
-    endTurnServer(match);
+    // If there are pending clashes, start the first QTE now — between the
+    // animation and the next turn. Otherwise wrap up the turn normally.
+    if (r.clashQueue.length > 0){
+      startNextClashFromQueue(match);
+    } else {
+      endTurnServer(match);
+    }
   }
+}
+
+// ── Clash queue helpers ────────────────────────────────────────────────────
+const CLASH_SPEED_MIN_MS = 900;
+const CLASH_SPEED_MAX_MS = 1700;
+function randomClashSpeed(){
+  return Math.round(CLASH_SPEED_MIN_MS + Math.random() * (CLASH_SPEED_MAX_MS - CLASH_SPEED_MIN_MS));
+}
+function startNextClashFromQueue(match){
+  const r = match.runtime;
+  if (!r || r.clashQueue.length === 0) return false;
+  const ctx = r.clashQueue.shift();
+  const roundSpeeds = [randomClashSpeed(), randomClashSpeed(), randomClashSpeed()];
+  match.clash = {
+    ctx,
+    roundSpeeds,
+    scoresA: [],
+    scoresB: [],
+    currentRound: 0,
+    aDone: false,
+    bDone: false,
+    resolved: null
+  };
+  broadcastMatch(match, { type: 'clash-start', ctx, roundSpeeds });
+  return true;
 }
 
 // ── Turn end / goal / kickoff ──────────────────────────────────────────────
@@ -968,19 +1006,32 @@ function handleQteScore(ws, msg){
   const c = clientsByWs.get(ws);
   if (!c || !c.matchId) return;
   const match = matches.get(c.matchId);
-  if (!match || !match.clash) return;
-  const isUs = c.username === match.playerA.username; // 'us' team
-  const arr = isUs ? match.clash.scoresA : match.clash.scoresB;
-  arr[msg.round - 1] = msg.score;
-
-  // Notify the opponent for live total updates
+  if (!match || !match.clash || match.clash.resolved) return;
+  const cl = match.clash;
+  // The round number in the message must match the current round on the
+  // server. Drop stale rounds (e.g. duplicate submissions).
+  const round = ((msg.round | 0) - 1);
+  if (round !== cl.currentRound) return;
+  const isUs = c.username === match.playerA.username;
+  if (isUs && cl.aDone) return;
+  if (!isUs && cl.bDone) return;
+  const arr = isUs ? cl.scoresA : cl.scoresB;
+  const score = Math.max(0, Math.min(100, msg.score | 0));
+  arr[cl.currentRound] = score;
+  if (isUs) cl.aDone = true; else cl.bDone = true;
+  // Tell the opponent the score landed (for the running total display).
   const oppWs = isUs ? match.playerB.ws : match.playerA.ws;
-  send(oppWs, { type: 'opp-qte-score', round: msg.round, score: msg.score });
-
-  const aDone = match.clash.scoresA.filter(s => s != null).length >= QTE_ROUNDS;
-  const bDone = match.clash.scoresB.filter(s => s != null).length >= QTE_ROUNDS;
-  if (aDone && bDone && !match.clash.resolved){
-    resolveClashServer(match);
+  send(oppWs, { type: 'opp-qte-score', round: cl.currentRound + 1, score });
+  // When both sides are done with this round, advance — or resolve.
+  if (cl.aDone && cl.bDone){
+    cl.currentRound += 1;
+    cl.aDone = false;
+    cl.bDone = false;
+    if (cl.currentRound >= QTE_ROUNDS){
+      resolveClashServer(match);
+    } else {
+      broadcastMatch(match, { type: 'clash-round-next', round: cl.currentRound + 1 });
+    }
   }
 }
 function resolveClashServer(match){
@@ -1009,16 +1060,22 @@ function handleClashDismiss(ws){
   const match = matches.get(c.matchId);
   if (!match || !match.clash || !match.clash.resolved) return;
   applyClashOutcomeServer(match, match.clash.resolved);
-  // Resume sim (account for pause time)
-  if (match.runtime){
-    if (match.runtime.pauseStartedAt > 0){
-      match.runtime.pauseDuration += Date.now() - match.runtime.pauseStartedAt;
-      match.runtime.pauseStartedAt = 0;
-    }
-  }
   match.clash = null;
   broadcastMatch(match, { type: 'clash-dismiss' });
   broadcastMatch(match, { type: 'turn-state', state: snapshotState(match) });
+  // Two cases:
+  //   1. Post-animation collision clash: runtime is still set. Chain into
+  //      the next queued clash, or call endTurnServer if the queue is empty.
+  //   2. Auto-clash from an ability that fired at endTurnServer: runtime is
+  //      already null because the turn has already ended. Just clear and
+  //      do nothing else — the planning phase resumes.
+  if (match.runtime){
+    if (match.runtime.clashQueue && match.runtime.clashQueue.length > 0){
+      startNextClashFromQueue(match);
+    } else {
+      endTurnServer(match);
+    }
+  }
 }
 function applyClashOutcomeServer(match, outcome){
   const { winnerId, loserId, throwAngle, throwDist } = outcome;

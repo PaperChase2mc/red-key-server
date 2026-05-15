@@ -428,31 +428,47 @@ function aimsForcingClash(matchStart, opponent){
 
 async function testClashFullFlow(){
   const { a, b, matchA, matchB } = await newMatch();
-  const aMatch = matchA;
-  const bMatch = matchB;
-  a.send({ type: 'aims', ...aimsForcingClash(aMatch) });
-  b.send({ type: 'aims', ...aimsForcingClash(bMatch) });
-  // Both should receive clash-start with the same ctx.
-  const cA = await a.expect('clash-start', 5000);
-  const cB = await b.expect('clash-start', 5000);
-  if (!cA.ctx || !cB.ctx) throw new Error('clash-start missing ctx');
+  a.send({ type: 'aims', ...aimsForcingClash(matchA) });
+  b.send({ type: 'aims', ...aimsForcingClash(matchB) });
+  // First: both clients should see clash-marker(s) BEFORE clash-start.
+  // (The animation continues; QTE waits.)
+  await a.expect('clash-marker', 5000);
+  await b.expect('clash-marker', 5000);
+  // After the animation finishes, both receive clash-start with matching
+  // ctx and IDENTICAL roundSpeeds (the server is the source of fairness).
+  const cA = await a.expect('clash-start', 8000);
+  const cB = await b.expect('clash-start', 8000);
   if (cA.ctx.moverId !== cB.ctx.moverId || cA.ctx.opponentId !== cB.ctx.opponentId){
     throw new Error('clash ctx differs between clients');
   }
-  // Both submit 3 QTE scores. Server expects round in 1..3.
+  if (!Array.isArray(cA.roundSpeeds) || cA.roundSpeeds.length !== 3){
+    throw new Error('clash-start should carry 3 roundSpeeds');
+  }
+  if (JSON.stringify(cA.roundSpeeds) !== JSON.stringify(cB.roundSpeeds)){
+    throw new Error('roundSpeeds differ between A and B (must be synced)');
+  }
+  // Walk rounds. Each client submits, opponent gets opp-qte-score, server
+  // sends clash-round-next once both finished.
   for (let round = 1; round <= 3; round++){
     a.send({ type: 'qte-score', round, score: 50 });
     b.send({ type: 'qte-score', round, score: 50 });
+    if (round < 3){
+      const nA = await a.expect('clash-round-next', 3000);
+      const nB = await b.expect('clash-round-next', 3000);
+      if (nA.round !== round + 1) throw new Error(`expected next round ${round+1}, got ${nA.round}`);
+    }
   }
-  // Each side should receive opp-qte-score events; eventually clash-outcome.
+  // After round 3, outcome lands.
   const outA = await a.expect('clash-outcome', 5000);
   const outB = await b.expect('clash-outcome', 5000);
   if (!outA.outcome || !outB.outcome) throw new Error('clash-outcome missing outcome');
-  // Each side dismisses; server should broadcast clash-dismiss to both.
+  // Either side dismisses to advance.
   a.send({ type: 'clash-dismiss' });
-  b.send({ type: 'clash-dismiss' });
   await a.expect('clash-dismiss', 3000);
   await b.expect('clash-dismiss', 3000);
+  // With no more clashes queued, the server fires turn-end.
+  await a.expect('turn-end', 5000);
+  await b.expect('turn-end', 5000);
   a.close(); b.close();
 }
 
@@ -911,22 +927,27 @@ async function testPlacedZoneSkipsWhenUnplaced(){
 }
 
 async function testMidClashReconnectKeepsScores(){
-  // Trigger a clash, both clients submit some rounds, then one reconnects.
-  // The server must still have the prior scores, and the same ctx must be
-  // reported so the client can preserve its local round counter.
+  // Walk rounds 1 + 2 normally (both sides submit, server advances). Before
+  // round 3, A bounces. Server still has rounds 1+2 stored for A. After
+  // reconnect, A submits round 3 and the clash resolves with all 6 scores
+  // intact.
   const { a, b, matchA, matchB } = await newMatch();
   a.send({ type: 'aims', ...aimsForcingClash(matchA) });
   b.send({ type: 'aims', ...aimsForcingClash(matchB) });
-  await a.expect('clash-start', 5000);
-  await b.expect('clash-start', 5000);
-  // A submits rounds 1 + 2.
-  a.send({ type: 'qte-score', round: 1, score: 50 });
-  a.send({ type: 'qte-score', round: 2, score: 50 });
-  // B submits all three.
-  b.send({ type: 'qte-score', round: 1, score: 50 });
-  b.send({ type: 'qte-score', round: 2, score: 50 });
-  b.send({ type: 'qte-score', round: 3, score: 50 });
-  // A bounces mid-clash. Reconnect, resume.
+  await a.expect('clash-start', 8000);
+  await b.expect('clash-start', 8000);
+  // Round 1 — both submit, both wait, server advances.
+  a.send({ type: 'qte-score', round: 1, score: 40 });
+  b.send({ type: 'qte-score', round: 1, score: 60 });
+  await a.expect('clash-round-next', 3000);
+  await b.expect('clash-round-next', 3000);
+  // Round 2 — same.
+  a.send({ type: 'qte-score', round: 2, score: 55 });
+  b.send({ type: 'qte-score', round: 2, score: 45 });
+  await a.expect('clash-round-next', 3000);
+  await b.expect('clash-round-next', 3000);
+  // Round 3 — B submits, A bounces BEFORE submitting.
+  b.send({ type: 'qte-score', round: 3, score: 70 });
   a.close();
   await sleep(150);
   const a2 = new TestClient(a.username);
@@ -934,14 +955,19 @@ async function testMidClashReconnectKeepsScores(){
   a2.hello();
   await a2.expect('welcome');
   const resumed = await a2.expect('match-start', 3000);
-  // Server must still report the SAME clash ctx.
   if (!resumed.clash || !resumed.clash.ctx){
     throw new Error('resume should include the active clash');
   }
-  // Now A finishes round 3. Server should accept it because rounds 1 and 2
-  // were never lost — they were stored before the disconnect.
+  // Server reports currentRound = 2 (0-indexed, i.e. round 3 in 1-indexed).
+  if ((resumed.clash.currentRound | 0) !== 2){
+    throw new Error(`expected currentRound 2, got ${resumed.clash.currentRound}`);
+  }
+  // Prior round scores must still be there.
+  if (!Array.isArray(resumed.clash.scoresA) || resumed.clash.scoresA.length < 2){
+    throw new Error('expected prior A scores in resume payload');
+  }
+  // A submits round 3. Server should resolve.
   a2.send({ type: 'qte-score', round: 3, score: 50 });
-  // With all 6 scores in, server resolves the clash.
   const outcome = await a2.expect('clash-outcome', 3000);
   if (!outcome.outcome) throw new Error('expected outcome');
   a2.close(); b.close();

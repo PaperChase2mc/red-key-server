@@ -368,6 +368,30 @@
   .pitch *{user-select:none}
   .player.movable{cursor:grab}
   .player.movable:active{cursor:grabbing}
+  /* Mid-animation clash markers — quick burst + lingering ✕ over the spot
+     where two opposing players collided. */
+  @keyframes clashFlashBurst {
+    0%   { r: 6;  opacity: 0.95; stroke-width: 4 }
+    100% { r: 38; opacity: 0;     stroke-width: 1 }
+  }
+  @keyframes clashCrossPulse {
+    0%, 100% { opacity: 0.55 }
+    50%      { opacity: 1 }
+  }
+  .clash-flash-burst{
+    fill: none;
+    stroke: #fde047;
+    pointer-events: none;
+    animation: clashFlashBurst 520ms ease-out forwards;
+  }
+  .clash-cross-mark{
+    pointer-events: none;
+    stroke: var(--red);
+    stroke-width: 3;
+    stroke-linecap: round;
+    animation: clashCrossPulse 1.2s ease-in-out infinite;
+  }
+
   /* Phase 3c: player-placed zones — chip row above the pitch during planning. */
   .zone-place-row{
     display: none;
@@ -911,30 +935,26 @@
     color: var(--ink);margin-bottom: 8px;
   }
   .qte-round em{color: var(--yellow); font-style:normal}
-  .qte-bar{
-    position:relative;height: 36px;
-    background: var(--bg);
-    border: 1px solid var(--line-2);
-    overflow: hidden;
-    margin-bottom: 12px;
+  /* New shrinking-ring QTE. */
+  .qte-ring-stage{
+    display: flex; justify-content: center; margin: 6px 0 14px;
   }
-  .qte-zone{
-    position:absolute;top:0;bottom:0;
-    background: linear-gradient(90deg, rgba(34,197,94,0.0), rgba(34,197,94,0.6), rgba(34,197,94,0.0));
-    border-left: 1px solid #22c55e;border-right: 1px solid #22c55e;
+  .qte-ring-svg{ width: 180px; height: 180px; display: block }
+  .qte-ring-track{ stroke: var(--line-2); opacity: 0.6 }
+  .qte-ring-target{ opacity: 0.85 }
+  .qte-ring{
+    stroke: var(--ink);
+    transition: r 0.05s linear;
+    filter: drop-shadow(0 0 6px rgba(255,255,255,0.6));
   }
-  .qte-zone-perfect{
-    position:absolute;top:0;bottom:0;
-    background: rgba(251,191,36,0.55);
+  .qte-ring-stage.locked .qte-ring{
+    stroke: var(--yellow);
+    filter: drop-shadow(0 0 12px rgba(251,191,36,0.9));
   }
-  .qte-cursor{
-    position:absolute;top:-2px;bottom:-2px;left:0;width:4px;
-    background: var(--ink);
-    box-shadow: 0 0 12px rgba(255,255,255,0.7);
-    transform: translate3d(0, 0, 0);
-    will-change: transform;
+  .qte-ring-stage.waiting .qte-ring{
+    stroke: var(--ink-dim);
+    opacity: 0.7;
   }
-  .qte-bar.locked .qte-cursor{background: var(--yellow); box-shadow: 0 0 12px rgba(251,191,36,0.9)}
   .qte-scores{
     display:grid;grid-template-columns: 1fr auto 1fr;gap: 12px;
     align-items: center;
@@ -1735,6 +1755,9 @@
       <!-- Phase 3b: ability requirement-zones layer (under players). -->
       <g id="zones-layer" pointer-events="none"></g>
 
+      <!-- Mid-animation clash flash + lingering "✕" mark over the collision spot. -->
+      <g id="clash-marker-layer" pointer-events="none"></g>
+
       <!-- Players -->
       <g id="p4-g" class="player" data-id="p4" transform="translate(130, 220)">
         <circle r="26" fill="#ffffff" opacity="0.0"/>
@@ -2374,10 +2397,12 @@
     <h2 class="qte-title">CLASH</h2>
     <div class="qte-sub" id="qte-sub">Time it · click anywhere or press Space</div>
     <div class="qte-round" id="qte-round">Round <em>1</em> / <em>3</em></div>
-    <div class="qte-bar" id="qte-bar">
-      <div class="qte-zone" id="qte-zone"></div>
-      <div class="qte-zone-perfect" id="qte-zone-perfect"></div>
-      <div class="qte-cursor" id="qte-cursor"></div>
+    <div class="qte-ring-stage" id="qte-ring-stage">
+      <svg viewBox="0 0 200 200" class="qte-ring-svg" aria-hidden="true">
+        <circle class="qte-ring-track"  cx="100" cy="100" r="90" fill="none" stroke-width="2"/>
+        <circle class="qte-ring-target" cx="100" cy="100" r="14" fill="#fff"/>
+        <circle class="qte-ring"        id="qte-ring" cx="100" cy="100" r="90" fill="none" stroke-width="6"/>
+      </svg>
     </div>
     <div class="qte-scores">
       <div class="qte-side us"><span class="qte-name" id="qte-name-us">Red Key</span><span class="qte-total" id="qte-total-us">0</span></div>
@@ -4025,232 +4050,308 @@
     return 'Turn complete.';
   }
 
-  // ── Clash QTE ────────────────────────────────────────
-  // A QTE bar sweeps a cursor; tap/space stops it. Round score is based on
-  // how close to the perfect zone you stop. Three rounds; whoever has the
-  // higher total wins. Loser is cast aside and frozen for one turn.
+  // ── Clash QTE (shrinking ring) ───────────────────────────────────────
+  // When two opposing players collide during the animation, the server only
+  // marks the pair (clash-marker event) — a flash appears on the field and
+  // both players freeze where they hit. The QTE itself runs AFTER the
+  // animation finishes, between turns. 3 rounds: a hollow ring shrinks
+  // toward a small "perfect" target. Tap/Space to lock. Tap later (smaller
+  // ring) = higher score. Both players see the same per-round speeds for
+  // fairness; whoever finishes a round first waits for the other before
+  // advancing.
   const QTE_ROUNDS = 3;
-  let clash = null; // { context, round, scoresUs[], scoresThem[], cursorPct, dir, speed, locked, raf, controlledIsMover, defenderTeam }
-  // context: { moverId, opponentId, ballState, kickerId, firstResolverId, bounces, ballSnap }
+  const RING_R_MAX = 90;
+  const RING_R_MIN = 14; // perfect-lock target
+  let clash = null;
+  let pendingClash = null;
+  const qteRing      = document.getElementById('qte-ring');
+  const qteRingStage = document.getElementById('qte-ring-stage');
+  const clashMarkerLayer = document.getElementById('clash-marker-layer');
 
-  function startClash(ctx){
-    pendingClash = ctx;
-    // Pause the action animation
+  function setRingRadius(r){
+    if (qteRing) qteRing.setAttribute('r', r.toFixed(1));
+  }
+
+  function startClash(msg){
+    // `msg` may be the server's clash-start payload (with roundSpeeds) OR
+    // a raw ctx object from practice. Normalise.
+    const ctx = msg && msg.ctx ? msg.ctx : msg;
+    if (!ctx || !players[ctx.moverId] || !players[ctx.opponentId]) return;
+    const roundSpeeds = (msg && Array.isArray(msg.roundSpeeds) && msg.roundSpeeds.length === QTE_ROUNDS)
+      ? msg.roundSpeeds
+      : [1300, 1100, 950];
+    // The participant on the LOCAL controlled side, vs the other.
     const moverTeam = players[ctx.moverId].team;
-    const oppTeam = players[ctx.opponentId].team;
-    // Player-side participant is whichever clasher belongs to the controlled team.
     const playerSideId = moverTeam === controlledTeam ? ctx.moverId : ctx.opponentId;
     const aiSideId     = moverTeam === controlledTeam ? ctx.opponentId : ctx.moverId;
-
-    qteNameUs.textContent = `#${players[playerSideId].num} ${teamLabel(players[playerSideId].team)}`;
-    qteNameThem.textContent = `#${players[aiSideId].num} ${teamLabel(players[aiSideId].team)}`;
-    // Color the QTE sides based on actual team identity, not left/right position
+    if (qteNameUs)   qteNameUs.textContent   = `#${players[playerSideId].num} ${teamLabel(players[playerSideId].team)}`;
+    if (qteNameThem) qteNameThem.textContent = `#${players[aiSideId].num} ${teamLabel(players[aiSideId].team)}`;
     const playerSide = qteTotalUs.parentElement;
-    const aiSide = qteTotalThem.parentElement;
-    playerSide.classList.toggle('us', players[playerSideId].team === 'us');
-    playerSide.classList.toggle('them', players[playerSideId].team === 'them');
-    aiSide.classList.toggle('us', players[aiSideId].team === 'us');
-    aiSide.classList.toggle('them', players[aiSideId].team === 'them');
+    const aiSide     = qteTotalThem.parentElement;
+    playerSide.classList.toggle('us',  players[playerSideId].team === 'us');
+    playerSide.classList.toggle('them',players[playerSideId].team === 'them');
+    aiSide.classList.toggle('us',  players[aiSideId].team === 'us');
+    aiSide.classList.toggle('them',players[aiSideId].team === 'them');
 
     clash = {
-      ctx,
-      playerSideId, aiSideId,
-      round: 1,
-      scoresUs: [], scoresThem: [],
+      ctx, playerSideId, aiSideId,
+      roundSpeeds,
+      currentRound: (msg && (msg.currentRound | 0)) || 0,
+      scoresUs:   [],   // my own scores in order
+      scoresThem: [],   // opponent's scores as they stream in
       locked: false,
-      cursorPct: 0,
-      dir: 1,
-      speed: 0,
+      startedAt: 0,
       raf: null,
-      lastTs: 0
+      resolved: null,
+      _dismissTimer: null
     };
-    // In MP, both totals stay hidden until the clash resolves; in SP the
-    // running total ticks up after each round as before.
+    // Preserve prior round scores on a mid-clash resume (server told us).
+    if (msg && Array.isArray(msg.scoresA) && Array.isArray(msg.scoresB)){
+      const myTeam = playerSideId
+        ? (players[playerSideId].team === 'us' ? 'a' : 'b')
+        : 'a';
+      const my  = myTeam === 'a' ? msg.scoresA : msg.scoresB;
+      const opp = myTeam === 'a' ? msg.scoresB : msg.scoresA;
+      for (let i = 0; i < QTE_ROUNDS; i++){
+        if (my[i]  != null) clash.scoresUs[i]   = my[i];
+        if (opp[i] != null) clash.scoresThem[i] = opp[i];
+      }
+    }
     qteTotalUs.textContent = mpMatchStarted ? '—' : '0';
     qteTotalThem.textContent = mpMatchStarted ? '—' : '0';
-    qteRoundsList.innerHTML = '';
-    qtePrompt.classList.remove('result');
+    if (qteRoundsList) qteRoundsList.innerHTML = '';
+    if (qtePrompt) qtePrompt.classList.remove('result');
     qteOverlay.classList.add('on');
-    setupZones();
-    nextQteRound();
+    if (qteRingStage){
+      qteRingStage.classList.remove('locked', 'waiting');
+    }
+    setRingRadius(RING_R_MAX);
+    // If the server already resolved this clash (e.g. resume after both
+    // finished), jump straight to the result screen.
+    if (msg && msg.resolved){
+      showClashOutcome(msg.resolved);
+      return;
+    }
+    startRound(clash.currentRound);
   }
 
-  function setupZones(){
-    // Zone (good): 30% wide centered, perfect zone (8% wide centered)
-    const zoneWidth = 30, perfectWidth = 8;
-    qteZone.style.left = (50 - zoneWidth/2) + '%';
-    qteZone.style.width = zoneWidth + '%';
-    qteZonePerfect.style.left = (50 - perfectWidth/2) + '%';
-    qteZonePerfect.style.width = perfectWidth + '%';
-  }
-
-  function setCursorPct(pct){
-    // Use a compositor-friendly transform so the cursor doesn't trigger layout
-    // every frame. barWidth is cached per round.
-    const x = (pct / 100) * clash.barWidth - 2; // 2 = half of the 4px cursor width
-    qteCursor.style.transform = `translate3d(${x.toFixed(1)}px, 0, 0)`;
-  }
-
-  function nextQteRound(){
+  function startRound(idx){
     if (!clash) return;
-    if (clash.round > QTE_ROUNDS){
-      // All my rounds done. In MP, wait for opponent's scores too.
-      if (mpMatchStarted){
-        const oppScores = clash.opponentScores || [];
-        const oppDone = oppScores.filter(s => s != null).length >= QTE_ROUNDS;
-        if (!oppDone){
-          clash.awaitingOpponentFinish = true;
-          qteSub.textContent = 'Waiting for opponent to finish their rounds…';
-          qtePrompt.innerHTML = `All 3 rounds locked in · waiting for opponent…`;
-          qtePrompt.classList.add('result');
-          if (clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
-          clash.awaitingTimeout = setTimeout(() => {
-            if (!clash || !clash.awaitingOpponentFinish) return;
-            const opp = clash.opponentScores || [];
-            clash.scoresThem = [];
-            for (let i = 0; i < QTE_ROUNDS; i++){
-              clash.scoresThem.push(opp[i] != null ? opp[i] : 0);
-            }
-            clash.awaitingOpponentFinish = false;
-            advanceAfterAllScores();
-          }, 8000);
-          return;
-        }
-        clash.scoresThem = clash.opponentScores.slice();
-      }
-      advanceAfterAllScores();
-      return;
-    }
+    clash.currentRound = idx;
     clash.locked = false;
-    clash.cursorPct = 0;
-    clash.barWidth = qteBar.clientWidth || 400;
-    // Single-pass: cursor starts at 0 and sweeps toward 100. No bounce.
-    clash.speed = 60 + Math.random() * 90; // 60–150 %/sec
-    clash.lastTs = performance.now();
-    qteBar.classList.remove('locked');
-    setCursorPct(0);
-    qteRound.innerHTML = `Round <em>${clash.round}</em> / <em>${QTE_ROUNDS}</em>`;
-    qteSub.textContent = `Speed ${Math.round(clash.speed)} · single pass — don't let it run out`;
-    qtePrompt.innerHTML = `Click or press <kbd>Space</kbd> to lock the bar.`;
-    qtePrompt.classList.remove('result');
-    runQteFrame();
+    clash.startedAt = performance.now();
+    if (qteRingStage){
+      qteRingStage.classList.remove('locked', 'waiting');
+    }
+    setRingRadius(RING_R_MAX);
+    if (qteRound){
+      qteRound.innerHTML = `Round <em>${idx + 1}</em> / <em>${QTE_ROUNDS}</em>`;
+    }
+    if (qteSub){
+      const sp = clash.roundSpeeds[idx];
+      qteSub.textContent = `Tap when the ring is at its smallest · speed ${sp}ms`;
+    }
+    if (qtePrompt){
+      qtePrompt.innerHTML = `Click or press <kbd>Space</kbd> to lock.`;
+      qtePrompt.classList.remove('result');
+    }
+    if (clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
+    clash.raf = requestAnimationFrame(ringFrame);
   }
 
-  function runQteFrame(){
-    if (!clash || clash.locked){ return; }
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - clash.lastTs) / 1000);
-    clash.lastTs = now;
-    clash.cursorPct += clash.speed * dt;
-    if (clash.cursorPct >= 100){
-      clash.cursorPct = 100;
-      setCursorPct(100);
-      finishQteRound(true); // missed — ran off the end
+  function ringFrame(){
+    if (!clash || clash.locked) return;
+    const dur = clash.roundSpeeds[clash.currentRound] || 1200;
+    const elapsed = performance.now() - clash.startedAt;
+    const k = Math.min(1, elapsed / dur);
+    const r = RING_R_MAX - (RING_R_MAX - RING_R_MIN) * k;
+    setRingRadius(r);
+    if (k >= 1){
+      // Ran out — auto-miss, score 0.
+      lockRing(true);
       return;
     }
-    setCursorPct(clash.cursorPct);
-    clash.raf = requestAnimationFrame(runQteFrame);
+    clash.raf = requestAnimationFrame(ringFrame);
   }
 
-  function lockQte(){ finishQteRound(false); }
-
-  function finishQteRound(missed){
+  function lockRing(timedOut){
     if (!clash || clash.locked) return;
     clash.locked = true;
-    qteBar.classList.add('locked');
-    if (clash.raf){ cancelAnimationFrame(clash.raf); clash.raf = null; }
-    let score;
-    if (missed){
-      score = 0;
-    } else {
-      const distFromCenter = Math.abs(clash.cursorPct - 50);
-      score = Math.max(0, Math.round(100 - distFromCenter * 2));
-      if (distFromCenter < 4) score = Math.min(100, score + 10);
-    }
-    clash.scoresUs.push(score);
-
-    if (mpMatchStarted){
-      // Stream my score to the opponent and advance my own rounds immediately
-      mpSendQteScore(clash.round, score);
-      showMyRoundResult(missed, score);
-    } else {
-      // Single-player: AI rolls a comparable score and we show the head-to-head
-      const aiBase = 30 + Math.floor(Math.random() * 65);
-      clash.scoresThem.push(aiBase);
-      showRoundResultBoth(missed, score, aiBase);
-    }
-    clash.round += 1;
-    setTimeout(nextQteRound, 700);
-  }
-
-  function showMyRoundResult(missed, myScore){
-    const span = document.createElement('span');
-    // In MP, hide the numeric score — totals stay secret until the clash
-    // resolves so both players see them at the same moment.
-    if (mpMatchStarted){
-      span.textContent = `R${clash.round}: ${missed ? '✗' : '✓'}`;
+    if (clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} clash.raf = null; }
+    const dur = clash.roundSpeeds[clash.currentRound] || 1200;
+    const elapsed = performance.now() - clash.startedAt;
+    const score = timedOut ? 0 : Math.max(0, Math.min(100, Math.round((elapsed / dur) * 100)));
+    clash.scoresUs[clash.currentRound] = score;
+    if (qteRingStage) qteRingStage.classList.add('locked');
+    // Append a "round result" chip to the rounds list (hidden score in MP
+    // until the clash resolves; visible in practice).
+    if (qteRoundsList){
+      const span = document.createElement('span');
+      span.textContent = mpMatchStarted
+        ? `R${clash.currentRound + 1}: ${timedOut ? '✗' : '✓'}`
+        : `R${clash.currentRound + 1}: ${timedOut ? 'MISS' : score}`;
       qteRoundsList.appendChild(span);
-      qtePrompt.innerHTML = missed
-        ? `Round ${clash.round}: <strong>missed</strong> · keep going`
-        : `Round ${clash.round}: <strong>locked in</strong>`;
-    } else {
-      span.textContent = `R${clash.round}: ${missed ? 'MISS' : myScore}`;
-      qteRoundsList.appendChild(span);
-      qteTotalUs.textContent = clash.scoresUs.reduce((a,b)=>a+b, 0);
-      qtePrompt.innerHTML = missed
-        ? `Round ${clash.round}: <strong>missed</strong>`
-        : `Round ${clash.round}: <strong>${myScore}</strong>`;
     }
-    qtePrompt.classList.add('result');
+    if (mpMatchStarted){
+      // Stream the score to the server and wait for clash-round-next or
+      // clash-outcome.
+      wsSend({ type: 'qte-score', round: clash.currentRound + 1, score });
+      if (qteRingStage) qteRingStage.classList.add('waiting');
+      if (qtePrompt) qtePrompt.innerHTML = `Round ${clash.currentRound + 1}: <strong>${timedOut ? 'missed' : 'locked'}</strong> · waiting for opponent…`;
+    } else {
+      // Practice: AI score + show + advance locally.
+      const oppScore = 30 + Math.floor(Math.random() * 65);
+      clash.scoresThem[clash.currentRound] = oppScore;
+      qteTotalUs.textContent = clash.scoresUs.reduce((a, b) => a + (b | 0), 0);
+      qteTotalThem.textContent = clash.scoresThem.reduce((a, b) => a + (b | 0), 0);
+      if (qtePrompt){
+        qtePrompt.innerHTML = timedOut
+          ? `Round ${clash.currentRound + 1}: <strong>missed</strong> · opp ${oppScore}`
+          : `Round ${clash.currentRound + 1}: <strong>${score}</strong> vs <strong>${oppScore}</strong>`;
+        qtePrompt.classList.add('result');
+      }
+      setTimeout(() => {
+        const next = clash.currentRound + 1;
+        if (next >= QTE_ROUNDS) resolveClash();
+        else startRound(next);
+      }, 700);
+    }
   }
 
-  function showRoundResultBoth(missed, myScore, oppScore){
-    const winSym = myScore > oppScore ? 'win' : (myScore < oppScore ? 'lose' : '');
-    const span = document.createElement('span');
-    span.className = winSym;
-    span.textContent = `R${clash.round}: ${missed ? 'MISS' : myScore} v ${oppScore}`;
-    qteRoundsList.appendChild(span);
-    qteTotalUs.textContent = clash.scoresUs.reduce((a,b)=>a+b, 0);
-    qteTotalThem.textContent = clash.scoresThem.reduce((a,b)=>a+b, 0);
-    qtePrompt.innerHTML = missed
-      ? `Round ${clash.round}: <strong>missed</strong> · opponent ${oppScore}`
-      : `Round ${clash.round}: <strong>${myScore}</strong> vs <strong>${oppScore}</strong>`;
-    qtePrompt.classList.add('result');
+  // Server says everyone finished this round — advance.
+  function advanceClashRound(roundNum1Based){
+    if (!clash) return;
+    if (qteRingStage) qteRingStage.classList.remove('waiting');
+    startRound(roundNum1Based - 1);
   }
 
+  // Stream-in scores from the opponent (MP). We don't show the number until
+  // the clash resolves, but we accept and remember it so resume payloads
+  // can rebuild the running view.
+  function handleOppQteScore(round, score){
+    if (!clash) return;
+    clash.scoresThem[round - 1] = score | 0;
+  }
+
+  function showClashOutcome(outcome){
+    if (!clash) return;
+    clash.resolved = outcome;
+    if (clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} clash.raf = null; }
+    if (qteRingStage){
+      qteRingStage.classList.remove('waiting');
+      qteRingStage.classList.add('locked');
+    }
+    const totalUs   = (outcome && typeof outcome.totalUs   === 'number') ? outcome.totalUs   : clash.scoresUs.reduce((a,b)=>a+(b|0), 0);
+    const totalThem = (outcome && typeof outcome.totalThem === 'number') ? outcome.totalThem : clash.scoresThem.reduce((a,b)=>a+(b|0), 0);
+    // The server uses totalA / totalB keyed to playerA (us) / playerB (them).
+    // We map them to whichever side is local.
+    if (outcome && typeof outcome.totalA === 'number' && typeof outcome.totalB === 'number'){
+      // mover/opponent ids are stable; figure out which side is "ours" using
+      // the playerSideId we stored at clash start.
+      const myIsA = players[clash.playerSideId].team === 'us';
+      qteTotalUs.textContent   = myIsA ? outcome.totalA : outcome.totalB;
+      qteTotalThem.textContent = myIsA ? outcome.totalB : outcome.totalA;
+    } else {
+      qteTotalUs.textContent   = totalUs;
+      qteTotalThem.textContent = totalThem;
+    }
+    if (qtePrompt){
+      const wname = players[outcome.winnerId] ? `#${players[outcome.winnerId].num}` : '?';
+      qtePrompt.innerHTML = `<strong>${qteTotalUs.textContent} : ${qteTotalThem.textContent}</strong> · ${wname} wins the clash. Tap to continue.`;
+      qtePrompt.classList.add('result');
+    }
+    if (qteSub) qteSub.textContent = 'Clash resolved';
+  }
+
+  // Practice-mode local resolver (no server).
   function resolveClash(){
-    const totalUs = clash.scoresUs.reduce((a,b)=>a+b, 0);
-    const totalThem = clash.scoresThem.reduce((a,b)=>a+b, 0);
-    // Deterministic outcome — ties always go to the player who initiated the
-    // clash (ctx.moverId), which is identical on both clients.
+    if (!clash) return;
+    const totalUs   = clash.scoresUs.reduce((a, b) => a + (b | 0), 0);
+    const totalThem = clash.scoresThem.reduce((a, b) => a + (b | 0), 0);
     let winnerId, loserId;
-    if (totalUs > totalThem){
-      winnerId = clash.playerSideId; loserId = clash.aiSideId;
-    } else if (totalThem > totalUs){
-      winnerId = clash.aiSideId; loserId = clash.playerSideId;
-    } else {
-      winnerId = clash.ctx.moverId;
-      loserId  = clash.ctx.opponentId;
-    }
-    // Pre-compute throw so both clients use identical values
+    if (totalUs > totalThem){ winnerId = clash.playerSideId; loserId = clash.aiSideId; }
+    else if (totalThem > totalUs){ winnerId = clash.aiSideId; loserId = clash.playerSideId; }
+    else { winnerId = clash.ctx.moverId; loserId = clash.ctx.opponentId; }
     const throwAngle = Math.random() * Math.PI * 2;
     const throwDist  = 55 + Math.random() * 30;
-    clash.resolved = { winnerId, loserId, throwAngle, throwDist, totalUs, totalThem };
-    // REVEAL the totals now (they were hidden during the rounds in MP)
-    qteTotalUs.textContent = totalUs;
-    qteTotalThem.textContent = totalThem;
-    qtePrompt.innerHTML = `<strong>${totalUs} : ${totalThem}</strong> · #${players[winnerId].num} wins the clash. Tap to continue.`;
-    qtePrompt.classList.add('result');
-    qteSub.textContent = 'Clash resolved';
-    // Host: push the outcome to client so they use identical values (including throw)
-    if (mpMatchStarted && mpIAmHost && mpPartner){
-      mpSend({
-        type: 'clash-outcome',
-        from: currentUser, to: mpPartner.username,
-        outcome: clash.resolved
-      });
-    }
+    showClashOutcome({ winnerId, loserId, throwAngle, throwDist, totalUs, totalThem });
   }
+
+  // Apply a clash outcome to local state (practice mode — MP server does
+  // this itself and we get the new positions via turn-state).
+  function applyClashOutcome(winnerId, loserId, throwAngle, throwDist){
+    const loser = players[loserId];
+    const angle = (throwAngle != null) ? throwAngle : Math.random() * Math.PI * 2;
+    const dist  = (throwDist  != null) ? throwDist  : (55 + Math.random() * 30);
+    let nx = loser.x + Math.cos(angle) * dist;
+    let ny = loser.y + Math.sin(angle) * dist;
+    nx = Math.max(F_LEFT + PLAYER_R + 1, Math.min(F_RIGHT - PLAYER_R - 1, nx));
+    ny = Math.max(F_TOP  + PLAYER_R + 1, Math.min(F_BOT  - PLAYER_R - 1, ny));
+    setPlayerPos(loserId, nx, ny);
+    frozen[loserId] = 2;
+    if (ballHolderId === loserId){
+      ballHolderId = winnerId;
+      const w = players[winnerId];
+      const dirY = w.team === 'us' ? -BALL_OFFSET_MAG : BALL_OFFSET_MAG;
+      ballOffset = { x: 0, y: dirY };
+      ball.x = w.x + ballOffset.x;
+      ball.y = w.y + ballOffset.y;
+      mode = 'kick';
+    }
+    ballG.setAttribute('transform', `translate(${ball.x.toFixed(2)}, ${ball.y.toFixed(2)}) rotate(${ballRot.toFixed(0)})`);
+    const wName = players[winnerId].team === controlledTeam ? `#${players[winnerId].num}` : `Enemy #${players[winnerId].num}`;
+    const lName = players[loserId].team  === controlledTeam ? `#${players[loserId].num}`  : `Enemy #${players[loserId].num}`;
+    hint.textContent = `${wName} won the clash · ${lName} thrown back (frozen 1 turn).`;
+    if (actionRuntime){
+      actionRuntime.runs = actionRuntime.runs.filter(run => run.moverId !== loserId);
+      actionRuntime.pauseDuration += performance.now() - (actionRuntime.pauseStartedAt || performance.now());
+      if (actionRuntime.activeClashIds){
+        actionRuntime.activeClashIds.delete(winnerId);
+        actionRuntime.activeClashIds.delete(loserId);
+      }
+    }
+    refreshRosterUI();
+    refreshPossessionUI();
+  }
+
+  // Visual collision marker — a quick burst + lingering ✕ on the field
+  // where two opposing players hit. Shown DURING the animation so players
+  // can see what's about to happen. The actual QTE doesn't start until
+  // the animation finishes.
+  function spawnClashMarker(x, y){
+    if (!clashMarkerLayer) return;
+    const svgNS = 'http://www.w3.org/2000/svg';
+    // Burst ring (auto-fades via CSS animation).
+    const burst = document.createElementNS(svgNS, 'circle');
+    burst.setAttribute('cx', x);
+    burst.setAttribute('cy', y);
+    burst.setAttribute('r', '6');
+    burst.setAttribute('class', 'clash-flash-burst');
+    clashMarkerLayer.appendChild(burst);
+    setTimeout(() => { try { burst.remove(); } catch(_){} }, 600);
+    // Lingering ✕ marker (stays until next turn-end clears the layer).
+    const g = document.createElementNS(svgNS, 'g');
+    g.setAttribute('class', 'clash-cross-mark');
+    g.setAttribute('transform', `translate(${x}, ${y})`);
+    const arms = [
+      { x1: -8, y1: -8, x2: 8, y2: 8 },
+      { x1: -8, y1: 8,  x2: 8, y2: -8 }
+    ];
+    for (const a of arms){
+      const l = document.createElementNS(svgNS, 'line');
+      l.setAttribute('x1', a.x1); l.setAttribute('y1', a.y1);
+      l.setAttribute('x2', a.x2); l.setAttribute('y2', a.y2);
+      g.appendChild(l);
+    }
+    clashMarkerLayer.appendChild(g);
+  }
+  function clearClashMarkers(){
+    if (clashMarkerLayer) while (clashMarkerLayer.firstChild) clashMarkerLayer.removeChild(clashMarkerLayer.firstChild);
+  }
+
+  // Keybind / input → ring lock or dismiss. Called from qteInput which is
+  // wired below to qteOverlay's click.
+  function lockQte(){ lockRing(false); }
 
   function dismissClash(fromRemote){
     if (!clash) return;
@@ -5351,6 +5452,7 @@
     clearZones();
     clearLocalPlacedZones();
     clearAllActivations();
+    if (typeof clearClashMarkers === 'function') clearClashMarkers();
     lastServerZones = [];
   }
 
@@ -5722,6 +5824,8 @@
         animating = false;
         mpMyAimsLocked = null;
         mpOpponentAimsLocked = null;
+        // New turn begins — wipe last turn's collision markers from the pitch.
+        clearClashMarkers();
         refreshArrows();
         refreshModeUI();
         refreshPossessionUI();
@@ -5777,53 +5881,45 @@
           : `CONCEDED — ${scoreUs} · ${scoreThem}.`;
         break;
       }
+      case 'clash-marker': {
+        // Visual flash on the pitch where two players collided. The actual
+        // QTE waits until the animation finishes.
+        if (typeof msg.x === 'number' && typeof msg.y === 'number'){
+          spawnClashMarker(msg.x, msg.y);
+        }
+        break;
+      }
       case 'clash-start': {
         if (!mpMatchStarted || !msg.ctx) break;
-        // If we're already in the EXACT same clash (same mover + opponent),
-        // ignore the duplicate broadcast — restarting the QTE would wipe the
-        // local round counter and cause the "loop forever, get auto-zero" bug.
+        // Dedupe: same ctx + same currentRound → ignore duplicate broadcast.
         if (clash && clash.ctx
             && clash.ctx.moverId    === msg.ctx.moverId
-            && clash.ctx.opponentId === msg.ctx.opponentId){
+            && clash.ctx.opponentId === msg.ctx.opponentId
+            && (clash.currentRound | 0) === ((msg.currentRound | 0))){
           break;
         }
-        // Different clash (or no current one) — tear down stale state first.
+        // Different clash (or progressed) — tear down + start.
         if (clash){
           if (clash.raf){ try { cancelAnimationFrame(clash.raf); } catch(_){} }
-          if (clash.awaitingTimeout){ clearTimeout(clash.awaitingTimeout); }
-          if (clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); }
+          if (clash._dismissTimer){ clearTimeout(clash._dismissTimer); }
           clash = null;
         }
-        startClash(msg.ctx);
+        startClash(msg);
+        break;
+      }
+      case 'clash-round-next': {
+        // Server says both sides finished the current round — advance.
+        if (!clash) break;
+        advanceClashRound(msg.round | 0);
         break;
       }
       case 'opp-qte-score': {
-        if (!clash) break;
-        clash.opponentScores = clash.opponentScores || [];
-        clash.opponentScores[msg.round - 1] = msg.score;
-        // Do NOT update qteTotalThem here — keep both totals hidden until reveal.
+        handleOppQteScore(msg.round | 0, msg.score | 0);
         break;
       }
       case 'clash-outcome': {
         if (!clash || !msg.outcome) break;
-        clash.resolved = msg.outcome;
-        clash.awaitingHostOutcome = false;
-        if (clash.hostOutcomeTimeout){ clearTimeout(clash.hostOutcomeTimeout); clash.hostOutcomeTimeout = null; }
-        // Prefer totals the host computed; fall back to recomputing if missing
-        const totalUs = (typeof msg.outcome.totalUs === 'number')
-          ? msg.outcome.totalUs
-          : clash.scoresUs.reduce((a,b)=>a+b, 0);
-        const totalThem = (typeof msg.outcome.totalThem === 'number')
-          ? msg.outcome.totalThem
-          : (clash.scoresThem.length
-              ? clash.scoresThem.reduce((a,b)=>a+b, 0)
-              : (clash.opponentScores || []).reduce((a,b)=>a+(b||0), 0));
-        // REVEAL totals (hidden until now)
-        qteTotalUs.textContent = totalUs;
-        qteTotalThem.textContent = totalThem;
-        qtePrompt.innerHTML = `<strong>${totalUs} : ${totalThem}</strong> · #${players[msg.outcome.winnerId].num} wins the clash. Tap to continue.`;
-        qtePrompt.classList.add('result');
-        qteSub.textContent = 'Clash resolved';
+        showClashOutcome(msg.outcome);
         break;
       }
       case 'clash-dismiss': {
@@ -6257,24 +6353,14 @@
     if (msg.state) applyTurnState(msg.state);
     if (isResumeSameTurn) mode = localModeBeforeResume;
     // If the server is mid-clash AND we don't already have that exact clash
-    // open locally, build the QTE overlay so we can participate.
-    if (incomingCtx && !sameClashAsLocal){
-      startClash(incomingCtx);
-    }
-    // Either way: if the server says the clash is RESOLVED, jump to the
-    // outcome screen even if we were mid-rounds (server's view wins).
-    if (msg.clash && msg.clash.resolved && clash){
-      clash.resolved = msg.clash.resolved;
-      const out = msg.clash.resolved;
-      const totalUs   = (typeof out.totalUs   === 'number') ? out.totalUs   : 0;
-      const totalThem = (typeof out.totalThem === 'number') ? out.totalThem : 0;
-      if (qteTotalUs)   qteTotalUs.textContent   = totalUs;
-      if (qteTotalThem) qteTotalThem.textContent = totalThem;
-      if (qtePrompt){
-        qtePrompt.innerHTML = `<strong>${totalUs} : ${totalThem}</strong> · #${players[out.winnerId] ? players[out.winnerId].num : '?'} wins the clash. Tap to continue.`;
-        qtePrompt.classList.add('result');
-      }
-      if (qteSub) qteSub.textContent = 'Clash resolved';
+    // open locally, build the QTE overlay so we can participate. The whole
+    // msg.clash payload (roundSpeeds, currentRound, prior scores, resolved)
+    // is fed into startClash so the resume picks up at the right round.
+    if (msg.clash && msg.clash.ctx && !sameClashAsLocal){
+      startClash(msg.clash);
+    } else if (msg.clash && msg.clash.resolved && clash){
+      // Same-clash resume where the server reports the clash is now resolved.
+      showClashOutcome(msg.clash.resolved);
     }
     buildRoster();
     refreshRosterUI();
