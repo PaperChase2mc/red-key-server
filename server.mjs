@@ -150,20 +150,22 @@ function createMatch(wsA, wsB, opts){
     runtime: null,
     clash: null,                // { ctx, scoresA, scoresB, resolved? }
 
-    // ── Phase 3a: ability execution state ──────────────────────────────
-    // abilitiesById: union of both sides' shared ability configs
-    //   { [abilityId]: { id, name, trigger, effect, magnitude, config } }
-    // cooldowns: per-player per-ability turns remaining
-    //   { [playerId]: { [abilityId]: number } }
-    // statMods: per-player additive stat modifiers consumed each turn
-    //   { [playerId]: { speed: 0, shooting: 0, stamina: 0 } }
-    // clashWinsThisTurn: ids that won a clash since last evaluator pass
+    // ── Phase 3a / 3b / 3c / Phase 6 ability execution state ───────────
+    // abilitiesById:  shared ability config pool
+    // cooldowns:      { [playerId]: { [abilityId]: turnsRemaining } }
+    // statMods:       per-player additive stat mods used by speedFactor etc.
+    // activeMods:     active duration effects we still need to expire later
+    //                 [{ pid, stat, amount, turnsLeft }]
+    // pendingRewards: deferred firings from `appliesNext` abilities
+    //                 [{ pid, abilityId, turnsLeft }]
     abilitiesById: {
       ...(usClient.abilities   || {}),
       ...(themClient.abilities || {})
     },
     cooldowns: {},
     statMods: {},
+    activeMods: [],
+    pendingRewards: [],
     clashWinsThisTurn: new Set()
   };
 
@@ -410,6 +412,19 @@ function startTurnAnimation(match){
   merge(match.aimsA && match.aimsA.zonePlacements);
   merge(match.aimsB && match.aimsB.zonePlacements);
   match.placedZones = placements;
+  // Capture activations for this turn so the evaluator can use them.
+  match.activationsThisTurn = {};
+  const collectActs = (src) => {
+    if (!src) return;
+    for (const pid of Object.keys(src)){
+      if (!match.activationsThisTurn[pid]) match.activationsThisTurn[pid] = {};
+      for (const abId of Object.keys(src[pid] || {})){
+        if (src[pid][abId]) match.activationsThisTurn[pid][abId] = true;
+      }
+    }
+  };
+  collectActs(match.aimsA && match.aimsA.activations);
+  collectActs(match.aimsB && match.aimsB.activations);
   match.aimsA = null;
   match.aimsB = null;
 }
@@ -554,13 +569,18 @@ function endTurnServer(match){
   for (const id in match.players){
     if (match.players[id].frozen > 0) match.players[id].frozen -= 1;
   }
-  // Evaluate equipped abilities; fire any whose requirements are met and
-  // whose cooldown has expired. Rewards mutate match state for the turn we're
-  // about to start. Auto-clash rewards can additionally set match.clash so
-  // the very next thing the players do is the QTE.
+  // Roll any active duration-bound stat mods forward by one turn first; any
+  // that just expired get their delta reversed inside tickActiveMods.
+  tickActiveMods(match);
+  // Evaluate equipped abilities; fire those the player activated and whose
+  // requirements are met. Rewards mutate match state for the turn we're
+  // about to start. Auto-clash can additionally set match.clash so the next
+  // thing both players do is the QTE.
   const { fired, autoClashStarted } = evaluateAbilities(match);
   decrementCooldowns(match);
   match.clashWinsThisTurn = new Set();
+  // Activations are one-turn-only; clear them after this turn's evaluation.
+  match.activationsThisTurn = {};
   match.turn += 1;
   match.animating = false;
   match.runtime = null;
@@ -685,6 +705,29 @@ function evalRequirementsMet(match, pid, cfg){
   return true;
 }
 
+// Push or refresh an active stat mod for a player. `amount` is signed.
+function pushActiveMod(match, pid, stat, amount, turns){
+  if (!amount || !turns || turns <= 0) return;
+  ensureStatMods(match, pid)[stat] = (ensureStatMods(match, pid)[stat] | 0) + amount;
+  match.activeMods.push({ pid, stat, amount, turnsLeft: turns });
+}
+// Decrement durations on active mods; reverse and drop expired ones.
+function tickActiveMods(match){
+  if (!Array.isArray(match.activeMods)) return;
+  const keep = [];
+  for (const m of match.activeMods){
+    m.turnsLeft -= 1;
+    if (m.turnsLeft <= 0){
+      // Reverse the effect.
+      const mods = ensureStatMods(match, m.pid);
+      mods[m.stat] = (mods[m.stat] | 0) - m.amount;
+    } else {
+      keep.push(m);
+    }
+  }
+  match.activeMods = keep;
+}
+
 function fireRewards(match, pid, ability, fired){
   const cfg = ability.config || {};
   const rewards = Array.isArray(cfg.rewards) ? cfg.rewards : [];
@@ -697,8 +740,9 @@ function fireRewards(match, pid, ability, fired){
     if (r.kind === 'stat-boost'){
       const stat = (r.stat === 'speed' || r.stat === 'shooting' || r.stat === 'stamina') ? r.stat : 'speed';
       const amt  = (r.amount | 0);
-      ensureStatMods(match, pid)[stat] += amt;
-      applied.push({ kind: 'stat-boost', stat, amount: amt });
+      const dur  = Math.max(1, (r.durationTurns | 0) || 1);
+      pushActiveMod(match, pid, stat, amt, dur);
+      applied.push({ kind: 'stat-boost', stat, amount: amt, durationTurns: dur });
     } else if (r.kind === 'give-ball'){
       const p = match.players[pid];
       if (p){
@@ -766,29 +810,64 @@ function fireRewards(match, pid, ability, fired){
 function evaluateAbilities(match){
   const fired = [];
   if (!match.abilitiesById) return { fired, autoClashStarted: false };
+
+  // 1) Fire any pending rewards from the previous turn (appliesNext path).
+  const stillPending = [];
+  for (const p of (match.pendingRewards || [])){
+    p.turnsLeft = (p.turnsLeft | 0) - 1;
+    if (p.turnsLeft > 0){ stillPending.push(p); continue; }
+    const ability = match.abilitiesById[p.abilityId];
+    if (!ability) continue;
+    const before = !!match.clash;
+    if (fireRewards(match, p.pid, ability, fired)){
+      setCooldown(match, p.pid, p.abilityId, (ability.config && ability.config.cooldownTurns) | 0);
+    }
+    if (!before && match.clash){
+      match.pendingRewards = stillPending;
+      return { fired, autoClashStarted: true };
+    }
+  }
+  match.pendingRewards = stillPending;
+
+  // 2) Evaluate ACTIVATED abilities only — no more passive auto-fire.
+  const acts = match.activationsThisTurn || {};
   for (const pid of Object.keys(match.players)){
     const player = match.players[pid];
     if (!player || !Array.isArray(player.weapons)) continue;
-    if (match.statMods[pid]){
-      match.statMods[pid].speed    = 0;
-      match.statMods[pid].shooting = 0;
-      match.statMods[pid].stamina  = 0;
-    }
     for (const abId of player.weapons){
       if (!abId) continue;
+      if (!(acts[pid] && acts[pid][abId])) continue; // not activated this turn
       const ability = match.abilitiesById[abId];
       if (!ability) continue;
       if (getCooldown(match, pid, abId) > 0) continue;
       const cfg = ability.config || {};
       if (cfg.scope === 'on-ball'  && match.ballHolder !== pid) continue;
       if (cfg.scope === 'off-ball' && match.ballHolder === pid) continue;
+      // If the ability has requirements, they must be met THIS turn for the
+      // reward to fire. No-requirement abilities fire immediately on use.
       if (!evalRequirementsMet(match, pid, cfg)) continue;
-      const hadClashBefore = !!match.clash;
+      // `appliesNext` defers the reward by one turn — useful for setup
+      // abilities where the effect is supposed to land later.
+      if (cfg.appliesNext){
+        match.pendingRewards.push({ pid, abilityId: abId, turnsLeft: 1 });
+        // Tag the deferral as a "fired" event so the client gets feedback
+        // immediately, with no concrete rewards applied yet.
+        fired.push({
+          playerId: pid,
+          abilityId: abId,
+          abilityName: ability.name,
+          rewards: [{ kind: 'deferred-next-turn' }],
+          soundUrl:    cfg.soundUrl    || null,
+          cutsceneUrl: cfg.cutsceneUrl || null
+        });
+        // Still consumes cooldown so you can't spam-defer.
+        setCooldown(match, pid, abId, (cfg.cooldownTurns | 0));
+        continue;
+      }
+      const before = !!match.clash;
       if (!fireRewards(match, pid, ability, fired)) continue;
       setCooldown(match, pid, abId, cfg.cooldownTurns | 0);
-      // If we just started an auto-clash, stop evaluating further abilities
-      // this turn — the clash takes over the match.
-      if (!hadClashBefore && match.clash){
+      if (!before && match.clash){
         return { fired, autoClashStarted: true };
       }
     }
@@ -1140,13 +1219,17 @@ function handleMessage(ws, msg){
       // anyway since tickMatch bails while clash is active.
       if (match.clash && !match.clash.resolved) break;
       const slot = c.username === match.playerA.username ? 'aimsA' : 'aimsB';
-      // Player-placed zones travel in zonePlacements: { [playerId]: { [zoneId]: { x, y } } }
       const placements = (msg.zonePlacements && typeof msg.zonePlacements === 'object') ? msg.zonePlacements : {};
+      // Ability activations: { [playerId]: { [abilityId]: true } } — the
+      // player flagged these to fire on this turn. The evaluator only
+      // considers activated abilities (no more passive auto-fire).
+      const activations = (msg.activations && typeof msg.activations === 'object') ? msg.activations : {};
       match[slot] = {
         aims: msg.aims || {},
         ballAim: msg.ballAim || null,
         mode: msg.mode || 'kick',
-        zonePlacements: placements
+        zonePlacements: placements,
+        activations
       };
       // Tell the other side
       const oppWs = c.username === match.playerA.username ? match.playerB.ws : match.playerA.ws;

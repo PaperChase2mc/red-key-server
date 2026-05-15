@@ -17,7 +17,16 @@ All notable changes to Red Key. Most recent first.
 ### Changed
 - WebSocket reconnect delay reduced from 5 seconds to 1.5 seconds. Brief network blips now recover three times faster.
 
+### Added
+- Weapons are now activated, not passive. During planning, tap the weapon button next to Kick / Dribble to flag the ability for use this turn. The button shows the weapon's name (or "None" when no usable weapon is equipped for the current ball state), and highlights gold when activated.
+- The action row stays visible even when the selected player doesn't have the ball, so you can prep off-ball weapons.
+- Two new Skill Builder settings on every ability: "Activating consumes the turn" (must lock in to use) and "Reward applies on the next turn" (one-turn delay).
+- Every reward has a "Lasts (turns)" field — stat boosts now persist for the configured number of turns before reversing.
+- The Test Ability button now drops you into a 1v1 practice match with the in-progress ability equipped on **all six** players (instead of just the two strikers), so you can verify it fires from any position.
+
 ### Changed
+- New drop rates: only Epic and Legendary characters get weapons. Epic always gets exactly one random weapon; Legendary always gets two distinct random weapons. Common / Uncommon / Rare get nothing.
+- Abilities no longer auto-fire passively. Even no-requirement abilities now require activation (tap the weapon button) before they fire.
 - The Skill Builder form is simplified to just Name and Description. The legacy Trigger, Effect, and Magnitude fields are gone — all real behavior lives in the existing Behavior / Zones / Requirements / Rewards sections.
 - The Description field is now player-facing: it appears on the player tile of any character that holds the weapon, in a gold-bordered callout below the weapon name. This is what players see when they get a character with the weapon.
 - The Test Ability button no longer opens a separate sandbox. It now equips your in-progress ability onto both teams' strikers and drops you straight into a practice match. A local evaluator mirrors the server's ability logic, so abilities fire at the end of each practice turn with the same flash, sound, and cutscene as in a real game. Leaving practice via the menu cleans up automatically — your real player rosters aren't touched.

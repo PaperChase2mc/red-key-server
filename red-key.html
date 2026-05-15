@@ -449,6 +449,25 @@
   }
   .mode-group{display:none;align-items:center;gap: 10px;flex-wrap:wrap}
   .mode-group.on{display:flex}
+  /* Weapon button on the action row: shows the selected player's usable weapon
+     (or "None"). Highlights when the player has flagged it for activation. */
+  .seg.weapon-seg{
+    border-color: var(--yellow);
+    color: var(--yellow);
+    letter-spacing: 0.14em;
+    max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .seg.weapon-seg:disabled{
+    color: var(--ink-dimmer);
+    border-color: var(--line-2);
+    cursor: not-allowed;
+  }
+  .seg.weapon-seg.activated{
+    background: var(--yellow);
+    color: #14110a;
+    box-shadow: 0 0 12px rgba(251,191,36,0.45);
+  }
   .mode-label{
     font-family:"JetBrains Mono", monospace;
     font-size: 10px;text-transform: uppercase;letter-spacing: 0.22em;
@@ -1807,9 +1826,12 @@
   <section class="controls" aria-label="Action controls">
     <div class="mode-group" id="mode-row">
       <span class="mode-label">Action</span>
-      <div class="segs" role="tablist">
+      <div class="segs" role="tablist" id="mode-ball-segs">
         <button class="seg on" data-mode="kick" type="button">Kick</button>
         <button class="seg" data-mode="dribble" type="button">Dribble</button>
+      </div>
+      <div class="segs" id="weapon-segs">
+        <button class="seg weapon-seg" id="weapon-use-btn" type="button" disabled>None</button>
       </div>
       <span class="mode-info" id="mode-info">Drag the ball to aim · max kick power</span>
     </div>
@@ -2221,7 +2243,7 @@
 
     <div class="admin-section">
       <h3>Behavior</h3>
-      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
         <div style="flex:1;min-width:200px">
           <div class="sb-row label" style="display:block;color:var(--ink-dimmer);font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:4px">Scope</div>
           <div class="sb-segs">
@@ -2233,6 +2255,16 @@
           <div style="color:var(--ink-dimmer);font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:4px">Cooldown (turns)</div>
           <input type="number" id="sb-cooldown" min="0" max="20" value="0" />
         </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-takes-turn" />
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Activating consumes the turn (must lock in to use)</span>
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-applies-next" />
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--ink-dim);text-transform:uppercase">Reward applies on the next turn (not the one activated)</span>
+        </label>
       </div>
     </div>
 
@@ -2707,17 +2739,17 @@
     return min + Math.floor(Math.random() * (max - min + 1));
   }
   function rollWeapons(rarity){
-    // Weapons drop only from epic and legendary pulls (25%).
+    // Common / Uncommon / Rare never roll weapons.
+    // Epic always gets exactly one random weapon.
+    // Legendary always gets two random (distinct if pool allows) weapons.
     if (rarity !== 'epic' && rarity !== 'legendary') return [null, null];
     const ids = Object.keys(db.abilities);
     if (ids.length === 0) return [null, null];
-    if (Math.random() >= 0.25) return [null, null];
-    const first = ids[Math.floor(Math.random()*ids.length)];
-    let second = null;
-    if (Math.random() < 0.5){
-      const others = ids.filter(i => i !== first);
-      second = others.length ? others[Math.floor(Math.random()*others.length)] : null;
-    }
+    const pick = () => ids[Math.floor(Math.random() * ids.length)];
+    const first = pick();
+    if (rarity === 'epic') return [first, null];
+    const others = ids.filter(i => i !== first);
+    const second = others.length ? others[Math.floor(Math.random() * others.length)] : null;
     return [first, second];
   }
   function generatePlayer(){
@@ -3173,8 +3205,6 @@
   }
   function canLockIn(){
     if (animating) return false;
-    // Once you've locked in for this MP turn, you can't lock in again — the
-    // button has to stay disabled even when something else refreshes it.
     if (mpMatchStarted && mpMyAimsLocked) return false;
     // Both teams move on the same turn, so any non-holder player with an
     // aim makes the turn lockable.
@@ -3185,6 +3215,13 @@
     if (hasBall()){
       if (mode === 'kick' && ballAim) return true;
       if (mode === 'dribble' && ballAim && playerAims[ballHolderId]) return true;
+    }
+    // Activating any "takes-turn" ability counts as a committable action.
+    for (const pid of Object.keys(localActivations)){
+      for (const abId of Object.keys(localActivations[pid] || {})){
+        const ab = db.abilities[abId];
+        if (ab && ab.config && ab.config.takesTurn) return true;
+      }
     }
     return false;
   }
@@ -3197,12 +3234,80 @@
     lockBtn.disabled = !canLockIn();
   }
   function refreshModeUI(){
-    modeRow.classList.toggle('on', hasBall());
+    // The action row is now visible whenever a player is selected. Kick/
+    // Dribble only matter when that player (or any controlled player) holds
+    // the ball, so we hide the ball segs accordingly.
+    const showRow = !!selectedId;
+    modeRow.classList.toggle('on', showRow);
+    const ballSegs = document.getElementById('mode-ball-segs');
+    if (ballSegs) ballSegs.style.display = hasBall() ? '' : 'none';
     ballRing.setAttribute('opacity', hasBall() && mode === 'dribble' ? '0.55' : '0');
     ballRing.classList.toggle('on', hasBall() && mode === 'dribble');
     ballG.classList.toggle('grabbable', hasBall());
     segBtns.forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
     modeInfo.textContent = modeBlurb();
+    refreshWeaponSeg();
+  }
+
+  // ── Weapon segment + activation state ───────────────────────────────
+  // localActivations[playerId][abilityId] = true while the player has flagged
+  // the ability for this turn. Travels with the aims message on lock-in.
+  let localActivations = {};
+  function setActivation(pid, abId, on){
+    if (!localActivations[pid]) localActivations[pid] = {};
+    if (on) localActivations[pid][abId] = true;
+    else    delete localActivations[pid][abId];
+    if (Object.keys(localActivations[pid]).length === 0) delete localActivations[pid];
+  }
+  function isActivated(pid, abId){
+    return !!(localActivations[pid] && localActivations[pid][abId]);
+  }
+  function clearAllActivations(){ localActivations = {}; }
+  function firstUsableWeapon(pid){
+    const p = pid && players[pid];
+    if (!p || !Array.isArray(p.weapons)) return null;
+    const onBall = (ballHolderId === pid);
+    for (const abId of p.weapons){
+      if (!abId) continue;
+      const ab = db.abilities[abId];
+      if (!ab) continue;
+      const scope = (ab.config && ab.config.scope) || 'on-ball';
+      const ok = (scope === 'on-ball')  ? onBall
+              :  (scope === 'off-ball') ? !onBall
+              :  true;
+      if (ok) return ab;
+    }
+    return null;
+  }
+  function refreshWeaponSeg(){
+    const btn = document.getElementById('weapon-use-btn');
+    if (!btn) return;
+    const ab = firstUsableWeapon(selectedId);
+    if (!ab){
+      btn.textContent = 'None';
+      btn.disabled = true;
+      btn.classList.remove('activated');
+      return;
+    }
+    btn.textContent = ab.name || 'Weapon';
+    btn.disabled = false;
+    btn.title = ab.description || '';
+    btn.classList.toggle('activated', isActivated(selectedId, ab.id));
+  }
+  const weaponUseBtn = document.getElementById('weapon-use-btn');
+  if (weaponUseBtn){
+    weaponUseBtn.addEventListener('click', () => {
+      if (animating) return;
+      if (mpMatchStarted && mpMyAimsLocked) return;
+      const ab = firstUsableWeapon(selectedId);
+      if (!ab) return;
+      const cur = isActivated(selectedId, ab.id);
+      setActivation(selectedId, ab.id, !cur);
+      refreshWeaponSeg();
+      // The Lock In button label/state may depend on activation when the
+      // ability is "takes-turn" — recompute.
+      if (typeof refreshLockBtn === 'function') refreshLockBtn();
+    });
   }
 
   // ── Path clamping ────────────────────────────────────
@@ -5200,6 +5305,7 @@
     if (matchRosterEl) matchRosterEl.classList.remove('on');
     clearZones();
     clearLocalPlacedZones();
+    clearAllActivations();
     lastServerZones = [];
   }
 
@@ -5579,6 +5685,8 @@
         lastServerZones = Array.isArray(msg.zones) ? msg.zones : [];
         localPlacedZones = {};
         activePlacement = null;
+        clearAllActivations();
+        refreshWeaponSeg();
         rebuildPendingPlaceableZones();
         renderZonePlacementUI();
         updatePitchPlacementCursor();
@@ -5965,7 +6073,6 @@
     // server can use them when evaluating ability requirements.
     const zonePlacements = {};
     for (const pid of Object.keys(localPlacedZones)){
-      // Only forward placements for player IDs I own — sanity guard.
       if (!teamIds(myT).includes(pid)) continue;
       const m = {};
       for (const zid of Object.keys(localPlacedZones[pid] || {})){
@@ -5974,7 +6081,17 @@
       }
       if (Object.keys(m).length) zonePlacements[pid] = m;
     }
-    return { aims, ballAim: myBallAim, mode: myHolder ? mode : null, zonePlacements };
+    // Ability activations: the player has flagged these for use this turn.
+    const activations = {};
+    for (const pid of Object.keys(localActivations)){
+      if (!teamIds(myT).includes(pid)) continue;
+      const m = {};
+      for (const abId of Object.keys(localActivations[pid] || {})){
+        m[abId] = true;
+      }
+      if (Object.keys(m).length) activations[pid] = m;
+    }
+    return { aims, ballAim: myBallAim, mode: myHolder ? mode : null, zonePlacements, activations };
   }
 
   function mpLockIn(){
@@ -5986,7 +6103,8 @@
       aims: mpMyAimsLocked.aims,
       ballAim: mpMyAimsLocked.ballAim,
       mode: mpMyAimsLocked.mode,
-      zonePlacements: mpMyAimsLocked.zonePlacements || {}
+      zonePlacements: mpMyAimsLocked.zonePlacements || {},
+      activations: mpMyAimsLocked.activations || {}
     });
     lockBtn.disabled = true;
     hint.textContent = `Locked — waiting for ${mpPartner ? mpPartner.username : 'opponent'}…`;
@@ -6226,6 +6344,8 @@
   const sbScopeOn    = document.getElementById('sb-scope-on');
   const sbScopeOff   = document.getElementById('sb-scope-off');
   const sbCooldown   = document.getElementById('sb-cooldown');
+  const sbTakesTurn  = document.getElementById('sb-takes-turn');
+  const sbAppliesNext= document.getElementById('sb-applies-next');
   const sbZonesList  = document.getElementById('sb-zones-list');
   const sbReqsList   = document.getElementById('sb-reqs-list');
   const sbRewardsList = document.getElementById('sb-rewards-list');
@@ -6236,6 +6356,8 @@
     return {
       scope: 'on-ball',
       cooldownTurns: 0,
+      takesTurn: false,          // ON: activating consumes the turn (must lock in)
+      appliesNext: false,        // ON: reward defers to the next turn-end
       zones: [],
       requirements: [],
       rewards: [],
@@ -6281,6 +6403,8 @@
   sbCooldown.addEventListener('input', () => {
     currentSkillConfig.cooldownTurns = Math.max(0, parseInt(sbCooldown.value || '0', 10) | 0);
   });
+  sbTakesTurn.addEventListener('change',  () => { currentSkillConfig.takesTurn   = !!sbTakesTurn.checked; });
+  sbAppliesNext.addEventListener('change',() => { currentSkillConfig.appliesNext = !!sbAppliesNext.checked; });
 
   // ── Zones ────────────────────────────────────
   function renderZonesList(){
@@ -6437,6 +6561,8 @@
 
   // ── Rewards ──────────────────────────────────
   function rewardExtraHtml(reward){
+    const dur = (typeof reward.durationTurns === 'number') ? reward.durationTurns : 1;
+    const durHtml = `<label>Lasts (turns) <input type="number" data-field="durationTurns" min="1" max="20" value="${Math.max(1, dur | 0)}" /></label>`;
     if (reward.kind === 'stat-boost'){
       const stat = reward.stat || 'speed';
       const amt  = (typeof reward.amount === 'number') ? reward.amount : 1;
@@ -6451,12 +6577,13 @@
         <label>Amount (can exceed 5)
           <input type="number" data-field="amount" min="-20" max="20" value="${amt | 0}" />
         </label>
+        ${durHtml}
       `;
     }
     if (reward.kind === 'teleport-to-zone' || reward.kind === 'auto-clash'){
-      return `<label>Zone <select data-field="zoneId">${zoneOptionsHtml(reward.zoneId)}</select></label>`;
+      return `<label>Zone <select data-field="zoneId">${zoneOptionsHtml(reward.zoneId)}</select></label>${durHtml}`;
     }
-    return '';
+    return durHtml;
   }
   function renderRewardsList(){
     sbRewardsList.innerHTML = '';
@@ -6494,9 +6621,12 @@
             if (reward.kind === 'teleport-to-zone' || reward.kind === 'auto-clash'){
               if (!reward.zoneId) reward.zoneId = currentSkillConfig.zones[0] ? currentSkillConfig.zones[0].id : '';
             }
+            if (typeof reward.durationTurns !== 'number') reward.durationTurns = 1;
             renderRewardsList();
           } else if (f === 'amount'){
             reward.amount = parseInt(el.value || '0', 10) | 0;
+          } else if (f === 'durationTurns'){
+            reward.durationTurns = Math.max(1, parseInt(el.value || '1', 10) | 0);
           } else {
             reward[f] = el.value;
           }
@@ -6510,7 +6640,7 @@
     });
   }
   document.getElementById('sb-add-reward').addEventListener('click', () => {
-    currentSkillConfig.rewards.push({ kind: 'stat-boost', stat: 'speed', amount: 1 });
+    currentSkillConfig.rewards.push({ kind: 'stat-boost', stat: 'speed', amount: 1, durationTurns: 1 });
     renderRewardsList();
   });
 
@@ -6525,6 +6655,8 @@
     sbScopeOn.classList.toggle('on',  currentSkillConfig.scope !== 'off-ball');
     sbScopeOff.classList.toggle('on', currentSkillConfig.scope === 'off-ball');
     sbCooldown.value = String(currentSkillConfig.cooldownTurns | 0);
+    sbTakesTurn.checked   = !!currentSkillConfig.takesTurn;
+    sbAppliesNext.checked = !!currentSkillConfig.appliesNext;
     renderZonesList();
     renderRequirementsList();
     renderRewardsList();
@@ -6802,10 +6934,12 @@
       config: JSON.parse(JSON.stringify(currentSkillConfig))
     };
     savedWeaponsForTest = snapshotPlayerWeapons();
-    // Equip on both strikers (p10 + p5) so the ability has a chance to fire
-    // from either side regardless of who has the ball.
-    for (const id of ['p10', 'p5']){
-      if (players[id]) players[id].weapons = [TEST_ABILITY_ID, (players[id].weapons && players[id].weapons[1]) || null];
+    // Equip the test ability on EVERY slot so it can fire from any player
+    // regardless of ball state — the practice is a 1v1 of the same weapon
+    // on both sides.
+    for (const id in players){
+      const second = (players[id].weapons && players[id].weapons[1]) || null;
+      players[id].weapons = [TEST_ABILITY_ID, second];
     }
     // Reset eval state.
     for (const k in practiceCooldowns) delete practiceCooldowns[k];
@@ -6942,18 +7076,53 @@
     }
     return applied;
   }
+  // Pending rewards from previous turn's appliesNext fires.
+  let practicePendingRewards = [];
   function evaluatePracticeAbilities(){
     if (!practiceTestActive) return;
     const ability = db.abilities[TEST_ABILITY_ID];
     if (!ability) return;
     const cfg = ability.config || {};
+
+    // 1) Fire any pending rewards from the previous turn.
+    const stillPending = [];
+    for (const p of practicePendingRewards){
+      p.turnsLeft = (p.turnsLeft | 0) - 1;
+      if (p.turnsLeft > 0){ stillPending.push(p); continue; }
+      const applied = practiceFireRewards(p.pid, ability);
+      if (applied.length > 0){
+        if (!practiceCooldowns[p.pid]) practiceCooldowns[p.pid] = {};
+        practiceCooldowns[p.pid][TEST_ABILITY_ID] = (cfg.cooldownTurns | 0) || 0;
+        flashAbilityFired({
+          type: 'ability-fired', playerId: p.pid, abilityId: TEST_ABILITY_ID,
+          abilityName: ability.name, rewards: applied,
+          soundUrl: cfg.soundUrl || null, cutsceneUrl: cfg.cutsceneUrl || null
+        });
+      }
+    }
+    practicePendingRewards = stillPending;
+
+    // 2) Evaluate activated abilities for THIS turn.
     for (const pid in players){
       const p = players[pid];
       if (!Array.isArray(p.weapons) || !p.weapons.includes(TEST_ABILITY_ID)) continue;
+      if (!isActivated(pid, TEST_ABILITY_ID)) continue;     // activation gate
       if (practiceCooldowns[pid] && practiceCooldowns[pid][TEST_ABILITY_ID] > 0) continue;
       if (cfg.scope === 'on-ball'  && ballHolderId !== pid) continue;
       if (cfg.scope === 'off-ball' && ballHolderId === pid) continue;
       if (!practiceEvalReqs(pid, cfg)) continue;
+      if (cfg.appliesNext){
+        practicePendingRewards.push({ pid, turnsLeft: 1 });
+        flashAbilityFired({
+          type: 'ability-fired', playerId: pid, abilityId: TEST_ABILITY_ID,
+          abilityName: ability.name,
+          rewards: [{ kind: 'deferred-next-turn' }],
+          soundUrl: cfg.soundUrl || null, cutsceneUrl: cfg.cutsceneUrl || null
+        });
+        if (!practiceCooldowns[pid]) practiceCooldowns[pid] = {};
+        practiceCooldowns[pid][TEST_ABILITY_ID] = (cfg.cooldownTurns | 0) || 0;
+        continue;
+      }
       const applied = practiceFireRewards(pid, ability);
       if (applied.length === 0) continue;
       if (!practiceCooldowns[pid]) practiceCooldowns[pid] = {};
@@ -6968,14 +7137,15 @@
         cutsceneUrl: cfg.cutsceneUrl || null
       });
     }
-    // Decrement cooldowns for next turn.
+    // Decrement cooldowns; clear activations + clash-wins for next turn.
     for (const pid in practiceCooldowns){
       for (const aid in practiceCooldowns[pid]){
         practiceCooldowns[pid][aid] = Math.max(0, practiceCooldowns[pid][aid] - 1);
       }
     }
     practiceClashWins = new Set();
-    // Refresh zone overlay (zones follow players who moved).
+    clearAllActivations();
+    refreshWeaponSeg();
     renderPracticeTestZones();
   }
   document.getElementById('sb-test').addEventListener('click', openPracticeTest);

@@ -186,18 +186,25 @@ async function newMatch(usernameA, usernameB){
   return { a, b, matchA: ms1, matchB: ms2 };
 }
 
-// Submit a no-op aims payload for the team this side owns.
-function submitNoOpAims(client, matchStart){
+// Submit a no-op aims payload for the team this side owns. Optionally
+// activates one ability on the team's striker (or a specified slot id) —
+// since Phase 6 only activated abilities fire.
+function submitNoOpAims(client, matchStart, opts){
   const aims = {};
-  // All player slot ids on the team owned by this client.
   const players = matchStart.players || {};
   const myTeam = matchStart.role === 'us' ? 'us' : 'them';
   for (const id of Object.keys(players)){
-    if (players[id].team === myTeam){
-      aims[id] = null; // null = no move planned for this player
-    }
+    if (players[id].team === myTeam) aims[id] = null;
   }
-  client.send({ type: 'aims', aims, ballAim: null, mode: 'kick' });
+  const activations = {};
+  if (opts && opts.activateAbility){
+    const pid = opts.activatePlayerId || (myTeam === 'us' ? 'p10' : 'p5');
+    activations[pid] = { [opts.activateAbility]: true };
+  }
+  client.send({
+    type: 'aims', aims, ballAim: null, mode: 'kick',
+    activations
+  });
 }
 
 // ── Scenarios ───────────────────────────────────────────────────────────────
@@ -525,6 +532,10 @@ async function testHeartbeatKeepsConnectionAlive(){
   a.close();
 }
 
+// Helpers for the activation-era ability tests. Wrap the previous
+// submitNoOpAims call sites so they also activate the ability.
+function _aimsActivating(c, m, ab){ return submitNoOpAims(c, m, { activateAbility: ab }); }
+
 async function testAbilityFiresNoReqs(){
   // Phase 3a: equip the us-team striker (p10) with a no-requirements
   // "give-ball" ability. After turn 1 the server should fire it and
@@ -567,10 +578,7 @@ async function testAbilityFiresNoReqs(){
   await a.expect('queued'); await b.expect('queued');
   const matchA = await a.expect('match-start');
   const matchB = await b.expect('match-start');
-  // a may or may not be playerA depending on alphabetical sort. We need to
-  // know who got the ability slot. The ability is on p10, which is owned
-  // by the 'us' team. We just need to verify ability-fired arrives.
-  submitNoOpAims(a, matchA);
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   // Server fires ability at end of turn 1; both sides should see the event.
   const firedA = await a.expect('ability-fired', 8000);
@@ -613,13 +621,13 @@ async function testAbilityCooldown(){
   const matchA = await a.expect('match-start');
   const matchB = await b.expect('match-start');
   // Turn 1
-  submitNoOpAims(a, matchA);
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   await a.expect('ability-fired', 8000); // first fire
   await a.expect('turn-end', 8000);
   await b.expect('turn-end', 8000);
-  // Turn 2 — same ability is on cooldown, must NOT fire.
-  submitNoOpAims(a, matchA);
+  // Turn 2 — activated again, but cooldown should suppress the fire.
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   await a.expectQuiet('ability-fired', 1200);
   a.close(); b.close();
@@ -666,7 +674,7 @@ async function testZoneReqMetFires(){
   if (!Array.isArray(matchA.zones) || matchA.zones.length === 0){
     throw new Error('match-start should include the zone for client rendering');
   }
-  submitNoOpAims(a, matchA);
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   // p5 sits exactly at the zone center → req met, ability fires.
   await a.expect('ability-fired', 8000);
@@ -707,7 +715,7 @@ async function testZoneReqUnmetSkips(){
   await a.expect('queued'); await b.expect('queued');
   const matchA = await a.expect('match-start');
   const matchB = await b.expect('match-start');
-  submitNoOpAims(a, matchA);
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   await a.expect('turn-end', 8000);
   // Nothing should have fired — req was unmet.
@@ -748,7 +756,7 @@ async function testTeleportToZoneMovesPlayer(){
   await a.expect('queued'); await b.expect('queued');
   const matchA = await a.expect('match-start');
   const matchB = await b.expect('match-start');
-  submitNoOpAims(a, matchA);
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   const fired = await a.expect('ability-fired', 8000);
   const tp = fired.rewards.find(r => r.kind === 'teleport-to-zone');
@@ -795,7 +803,7 @@ async function testAutoClashStartsClash(){
   await a.expect('queued'); await b.expect('queued');
   const matchA = await a.expect('match-start');
   const matchB = await b.expect('match-start');
-  submitNoOpAims(a, matchA);
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   // Both should see ability-fired carrying an auto-clash reward AND a
   // clash-start broadcast naming the same two players.
@@ -843,12 +851,14 @@ async function testPlacedZoneFiresWhenPlaced(){
   await a.expect('queued'); await b.expect('queued');
   const matchA = await a.expect('match-start');
   const matchB = await b.expect('match-start');
-  // A places the trap right on p5. B sends no-op aims.
+  // A places the trap right on p5 AND activates the ability on p10. B sends
+  // no-op aims.
   a.send({
     type: 'aims',
     aims: { p10: null, p11: null, p7: null },
     ballAim: null, mode: 'kick',
-    zonePlacements: { p10: { [zoneId]: { x: 270, y: 260 } } }
+    zonePlacements: { p10: { [zoneId]: { x: 270, y: 260 } } },
+    activations:    { p10: { [abilityId]: true } }
   });
   await b.expect('opponent-locked');
   submitNoOpAims(b, matchB);
@@ -892,11 +902,93 @@ async function testPlacedZoneSkipsWhenUnplaced(){
   await a.expect('queued'); await b.expect('queued');
   const matchA = await a.expect('match-start');
   const matchB = await b.expect('match-start');
-  submitNoOpAims(a, matchA);
+  _aimsActivating(a, matchA, abilityId);
   submitNoOpAims(b, matchB);
   await a.expect('turn-end', 8000);
   // Nothing should have fired.
   await a.expectQuiet('ability-fired', 200);
+  a.close(); b.close();
+}
+
+async function testActivationGate(){
+  // Phase 6: abilities no longer auto-fire — they must be activated. If the
+  // player doesn't include the ability in `activations`, nothing fires even
+  // when requirements (none here) trivially pass.
+  const a = new TestClient(uniq('agate-a'));
+  const b = new TestClient(uniq('agate-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_agate';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Always-On', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: { scope: 'off-ball', cooldownTurns: 5, zones: [], requirements: [],
+                rewards: [{ kind: 'stat-boost', stat: 'speed', amount: 1, durationTurns: 1 }] }
+    }
+  };
+  const equipped = [
+    { name: 'Tester', num: 7, stats: { speed: 2, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  // NO activation. Even though the ability has no reqs, it should NOT fire.
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  await a.expect('turn-end', 8000);
+  await a.expectQuiet('ability-fired', 200);
+  a.close(); b.close();
+}
+
+async function testAppliesNextDefersReward(){
+  // appliesNext = true: when activated this turn, the reward should NOT fire
+  // until the following turn-end. The first ability-fired event tags as
+  // 'deferred-next-turn'; the actual reward arrives on the next turn.
+  const a = new TestClient(uniq('an-a'));
+  const b = new TestClient(uniq('an-b'));
+  await a.open(); await b.open();
+  const abilityId = 'ab_applies_next';
+  const abilities = {
+    [abilityId]: {
+      id: abilityId, name: 'Slow Burn', trigger: 'passive',
+      effect: 'speed-boost', magnitude: 0,
+      config: { scope: 'off-ball', cooldownTurns: 5, takesTurn: false,
+                appliesNext: true, zones: [], requirements: [],
+                rewards: [{ kind: 'give-ball', durationTurns: 1 }] }
+    }
+  };
+  const equipped = [
+    { name: 'Tester', num: 7, stats: { speed: 2, shooting: 2, stamina: 2 },
+      rarity: 'epic', weapons: [abilityId, null] },
+    null, null
+  ];
+  a.send({ type: 'hello', username: a.username, equipped, abilities });
+  b.hello();
+  await a.expect('welcome'); await b.expect('welcome');
+  a.send({ type: 'queue' }); b.send({ type: 'queue' });
+  await a.expect('queued'); await b.expect('queued');
+  const matchA = await a.expect('match-start');
+  const matchB = await b.expect('match-start');
+  _aimsActivating(a, matchA, abilityId);
+  submitNoOpAims(b, matchB);
+  // Turn 1 ends — fired event arrives with a deferred-next-turn marker.
+  const firedDefer = await a.expect('ability-fired', 8000);
+  const deferred = firedDefer.rewards.find(r => r.kind === 'deferred-next-turn');
+  if (!deferred) throw new Error('expected deferred-next-turn marker on turn 1');
+  await a.expect('turn-end', 8000);
+  await b.expect('turn-end', 8000);
+  // Turn 2: no activation needed; the deferred reward should fire.
+  submitNoOpAims(a, matchA);
+  submitNoOpAims(b, matchB);
+  const firedReal = await a.expect('ability-fired', 8000);
+  const give = firedReal.rewards.find(r => r.kind === 'give-ball');
+  if (!give) throw new Error('expected give-ball reward on turn 2 (deferred from turn 1)');
   a.close(); b.close();
 }
 
@@ -942,7 +1034,9 @@ const SCENARIOS = [
   ['ability: teleport-to-zone moves the player',      testTeleportToZoneMovesPlayer],
   ['ability: auto-clash spawns clash-start broadcast',testAutoClashStartsClash],
   ['ability: player-placed zone fires when placed',   testPlacedZoneFiresWhenPlaced],
-  ['ability: player-placed zone skips when unplaced', testPlacedZoneSkipsWhenUnplaced]
+  ['ability: player-placed zone skips when unplaced', testPlacedZoneSkipsWhenUnplaced],
+  ['ability: activation gate — no activation, no fire',testActivationGate],
+  ['ability: appliesNext defers reward by one turn',  testAppliesNextDefersReward]
 ];
 
 async function main(){
